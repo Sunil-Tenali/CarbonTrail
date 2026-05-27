@@ -12,117 +12,198 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# Calculate project root directory for loading resources and configs
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
+# ============================================================================
+# SECURITY & ENVIRONMENT CONFIGURATION
+# ============================================================================
+# Note: In production, use environment variables for SECRET_KEY, DEBUG, etc.
 
-# SECURITY WARNING: keep the secret key used in production secret!
+# Django secret key for cryptographic signing (sessions, CSRF tokens, etc.)
+# SECURITY: Use secure random string in production, never commit to repo
 SECRET_KEY = 'django-insecure-0))qam6ln-8zmn2iwba!xx=9#x)u%cw_xm-o!m=!r^tie2$e_='
 
-# SECURITY WARNING: don't run with debug turned on in production!
+# Debug mode: Shows detailed error pages and disables optimizations
+# SECURITY: MUST be False in production (exposes sensitive code)
 DEBUG = True
 
+# List of allowed hostnames - only these hosts can access the API
+# SECURITY: In production, specify your actual domain (e.g., ['api.carbontrail.com'])
 ALLOWED_HOSTS = []
 
 
-# Application definition
+# ============================================================================
+# INSTALLED APPLICATIONS
+# ============================================================================
+# These define which Django and third-party apps are active in the system.
+# Order matters: apps listed first take precedence in template/URL resolution.
 
 INSTALLED_APPS = [
+    # Django core admin interface (at /admin/)
     'django.contrib.admin',
+    # User authentication and permissions system
     'django.contrib.auth',
+    # Content type framework (for generic relations)
     'django.contrib.contenttypes',
+    # Session management (for storing user state)
     'django.contrib.sessions',
+    # User messaging framework
     'django.contrib.messages',
+    # Static file serving (CSS, JS, images)
     'django.contrib.staticfiles',
     
+    # Third-party: REST Framework for API endpoints
     "rest_framework",
+    # Third-party: CORS middleware for cross-origin requests (frontend access)
     "corsheaders",
 
-    "organizations",
-    "ingestion",
-    "activities",
-    "audit",
+    # CarbonTrail custom apps for multi-tenancy and data management
+    "organizations",   # Tenant (organization) management
+    "ingestion",       # Data import pipeline
+    "activities",      # Core emissions data model
+    "audit",          # Change tracking and compliance
 ]
 
+# ============================================================================
+# MIDDLEWARE PROCESSING PIPELINE
+# ============================================================================
+# Middleware processes every request/response in order. Acts as request filters
+# and enriches requests with user info, session data, CSRF protection, etc.
+
 MIDDLEWARE = [
+    # Security headers (X-Frame-Options, X-Content-Type-Options, etc.)
     'django.middleware.security.SecurityMiddleware',
+    # Session management (loads user session from database)
     'django.contrib.sessions.middleware.SessionMiddleware',
+    # Common utilities (process request/response objects)
     'django.middleware.common.CommonMiddleware',
+    # CSRF protection (prevents cross-site form attacks)
     'django.middleware.csrf.CsrfViewMiddleware',
+    # User authentication (attaches user to request object)
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # Message display system (for one-time notifications)
     'django.contrib.messages.middleware.MessageMiddleware',
+    # Clickjacking protection (X-Frame-Options header)
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    # CORS headers (must be after SecurityMiddleware, before auth)
+    # Allows frontend (different domain) to access backend API
     "corsheaders.middleware.CorsMiddleware",
 ]
 
+# ============================================================================
+# CROSS-ORIGIN RESOURCE SHARING (CORS)
+# ============================================================================
+# Allow frontend applications to make API calls to this backend
+
+# WARNING: CORS_ALLOW_ALL_ORIGINS = True is insecure for production!
+# In production, specify allowed domains:
+# CORS_ALLOWED_ORIGINS = ["https://app.carbontrail.com", "https://admin.carbontrail.com"]
 CORS_ALLOW_ALL_ORIGINS = True
 
+# Point to main URL configuration file (defines all routes)
 ROOT_URLCONF = 'config.urls'
+
+
+# ============================================================================
+# TEMPLATE ENGINE CONFIGURATION
+# ============================================================================
+# Configures how HTML templates are loaded and rendered
 
 TEMPLATES = [
     {
+        # Use Django's built-in template engine
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
+        # List of directories to search for templates (empty = use app/templates/)
         'DIRS': [],
+        # Also search for templates in each app's templates/ directory
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
+                # Makes 'request' available in all templates
                 'django.template.context_processors.request',
+                # Makes 'user' and 'perms' available in all templates
                 'django.contrib.auth.context_processors.auth',
+                # Makes 'messages' (notifications) available in templates
                 'django.contrib.messages.context_processors.messages',
             ],
         },
     },
 ]
 
+# WSGI application used for deployment (Gunicorn, uWSGI)
+# Defines entry point for production web servers
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+# ============================================================================
+# DATABASE CONFIGURATION
+# ============================================================================
+# Configures which database backend stores all CarbonTrail data
+# Currently: SQLite (file-based, good for development)
+# Production: Consider PostgreSQL for multi-user scalability
 
 DATABASES = {
     'default': {
+        # Use SQLite (file-based database)
         'ENGINE': 'django.db.backends.sqlite3',
+        # Database file location: backend/db.sqlite3
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
 
 
-# Password validation
-# https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
+# ============================================================================
+# PASSWORD VALIDATION RULES
+# ============================================================================
+# All these validators run when users create or change passwords
+# They enforce minimum standards to prevent weak passwords
 
 AUTH_PASSWORD_VALIDATORS = [
     {
+        # Rejects passwords similar to username or email
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
     },
     {
+        # Requires minimum length (default: 8 characters)
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
     },
     {
+        # Rejects common passwords (like 'password', '123456')
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
     },
     {
+        # Rejects all-numeric passwords (like '1234567890')
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
 
 
-# Internationalization
-# https://docs.djangoproject.com/en/6.0/topics/i18n/
+# ============================================================================
+# INTERNATIONALIZATION & LOCALIZATION
+# ============================================================================
 
+# Language code for translations (templates, admin interface)
 LANGUAGE_CODE = 'en-us'
 
+# Timezone for datetime storage and display
+# Note: Database stores dates in UTC, displayed in this timezone
 TIME_ZONE = 'UTC'
 
+# Enable internationalization (language translation support)
 USE_I18N = True
 
+# Enable timezone-aware datetime objects
+# Recommended for global applications
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.0/howto/static-files/
+# ============================================================================
+# STATIC FILES CONFIGURATION
+# ============================================================================
+# Static files: CSS, JavaScript, images that don't change per request
+# In production, use a CDN or nginx to serve these instead of Django
 
+# URL path prefix for static files (e.g., /static/css/style.css)
 STATIC_URL = 'static/'

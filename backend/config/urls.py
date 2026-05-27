@@ -1,22 +1,34 @@
 """
-URL configuration for config project.
+URL configuration for CarbonTrail backend.
 
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/6.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+This is the ROOT URL configuration - all API routes are defined here.
+Django processes requests by matching URL patterns in order.
+
+URL ROUTING FLOW:
+1. Request comes in: GET /api/activity-records/?tenant_id=1
+2. Django matches 'api/' prefix and includes activities.urls
+3. activities.urls router handles 'activity-records/'
+4. ActivityRecordViewSet.list() method is called
+
+HIERARCHY:
+config/urls.py (this file)
+    └── activities/urls.py (includes router with all activity endpoints)
+
+MAIN ENDPOINTS:
+- /admin/                  - Django admin interface (staff only)
+- /api/activity-records/   - List, retrieve, approve, reject emissions data
 """
+
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
 
 urlpatterns = [
+    # Django admin interface: /admin/
+    # Allows staff to manage organizations, view audit logs, etc.
+    # SECURITY: Restrict access in production (use allowlist of staff IPs)
     path('admin/', admin.site.urls),
+    
+    # API routes: All REST endpoints are under /api/ prefix
+    # Includes the activities app router with all endpoints
+    path("api/", include("activities.urls")),
 ]
