@@ -15,8 +15,6 @@ from .models import ActivityRecord, ValidationIssue
 @admin.register(ActivityRecord)
 class ActivityRecordAdmin(admin.ModelAdmin):
     """
-    Admin interface for emissions activity records.
-
     Displays list view with key fields for understanding data state:
     - tenant: Which organization
     - source_type: Where data came from (SAP, utility, travel)
@@ -25,11 +23,6 @@ class ActivityRecordAdmin(admin.ModelAdmin):
     - status: Approval state (valid, suspicious, invalid, approved, rejected)
     - is_locked: Whether record is locked (immutable)
     - approved_at: When user approved
-
-    Filters help staff find:
-    - Activities by source and type
-    - Records by approval scope
-    - Locked vs unlocked records
     """
     list_display = (
         "id",
