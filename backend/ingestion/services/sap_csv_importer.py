@@ -1,13 +1,19 @@
-import csv
-import io
-from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from datetime import date
+from decimal import Decimal
 
 from django.db import transaction
 
 from activities.models import ActivityRecord, ValidationIssue
 from audit.models import AuditLog
 from ingestion.models import ImportBatch, RawActivityRow
+
+from .common import (
+    get_first_value,
+    open_uploaded_csv,
+    parse_date,
+    parse_decimal,
+    status_from_issues,
+)
 
 
 UNIT_NORMALIZATION_MAP = {
@@ -45,111 +51,10 @@ FUEL_KEYWORDS = [
 ]
 
 
-def get_first_value(row, possible_column_names):
-    """
-    Look for a value in a CSV row using several possible column names.
-
-    SAP exports can have different names depending on configuration.
-    For example:
-    - Plant
-    - plant
-    - Werk
-
-    This helper lets us support multiple names.
-    """
-    normalized_row = {}
-
-    for key, value in row.items():
-        if key is None:
-            continue
-
-        normalized_key = key.strip().lower()
-        normalized_row[normalized_key] = value
-
-    for column_name in possible_column_names:
-        lookup_key = column_name.strip().lower()
-
-        if lookup_key in normalized_row:
-            value = normalized_row[lookup_key]
-
-            if value is None:
-                return ""
-
-            return str(value).strip()
-
-    return ""
-
-
-def parse_decimal(value):
-    """
-    Convert text from a CSV file into a Decimal number.
-
-    Decimal is better than float for business data because it avoids
-    weird rounding surprises.
-    """
-    if value is None:
-        return None
-
-    cleaned = str(value).strip()
-
-    if cleaned == "":
-        return None
-
-    try:
-        if "," in cleaned and "." not in cleaned:
-            cleaned = cleaned.replace(",", ".")
-        else:
-            cleaned = cleaned.replace(",", "")
-
-        return Decimal(cleaned)
-
-    except InvalidOperation:
-        return None
-
-
-def parse_date(value):
-    """
-    Convert several common SAP/export date formats into a Python date.
-
-    Supported examples:
-    - 2024-01-15
-    - 15.01.2024
-    - 01/15/2024
-    - 15/01/2024
-    - 20240115
-    """
-    if value is None:
-        return None
-
-    cleaned = str(value).strip()
-
-    if cleaned == "":
-        return None
-
-    supported_formats = [
-        "%Y-%m-%d",
-        "%d.%m.%Y",
-        "%m/%d/%Y",
-        "%d/%m/%Y",
-        "%Y%m%d",
-    ]
-
-    for date_format in supported_formats:
-        try:
-            return datetime.strptime(cleaned, date_format).date()
-        except ValueError:
-            continue
-
-    return None
-
-
 def normalize_unit(quantity, unit):
     """
-    Convert different units into a standard unit.
-
-    Example:
-    - 10 gal becomes 37.8541 L
-    - 2 tonnes becomes 2000 kg
+    Normalize SAP units to standard forms (liters, kilograms).
+    Returns normalized quantity and unit, or original if unknown.
     """
     if quantity is None:
         return None, ""
@@ -170,11 +75,9 @@ def normalize_unit(quantity, unit):
 
 def classify_activity(material_name):
     """
-    Decide what kind of emissions activity this SAP row represents.
-
-    For now we are handling SAP fuel rows.
-    Fuel burned by the company is Scope 1.
-    Unknown procurement-like material becomes Scope 3.
+    Classify SAP material as fuel (Scope 1) or procurement (Scope 3).
+    Scope 1: direct company operations (company vehicles, on-site fuel).
+    Scope 3: purchased goods and services (procurement).
     """
     material_text = str(material_name or "").lower()
 
@@ -187,13 +90,27 @@ def classify_activity(material_name):
 
 class SAPCSVImporter:
     """
-    Imports a SAP-style CSV file into CarbonTrail.
+    Imports SAP fuel and procurement CSV exports.
 
-    This class does four jobs:
-    1. Save the uploaded file as an ImportBatch.
-    2. Save each original CSV row as RawActivityRow.
-    3. Create a normalized ActivityRecord.
-    4. Attach ValidationIssue rows for errors and warnings.
+    Real-world data shape:
+    SAP MMBE/MOUT exports provide material documents with quantities,
+    units, and plant codes. This prototype handles flat CSV exports with
+    columns like Document Number, Material, Quantity, UoM, Plant, Plant,
+    Posting Date, and Amount.
+
+    Prototype scope:
+    - Handles historical CSV snapshots, not live SAP API data
+    - Normalizes units (L, kg, tonnes)
+    - Classifies materials as fuel (Scope 1) or procurement (Scope 3)
+      using keyword detection on material names
+    - Preserves all raw rows as RawActivityRow for audit trail
+    - Creates ActivityRecord for each row with validation issues for
+      missing fields, invalid dates, outlier quantities
+
+    Design:
+    Raw source data is immutable. Analysts see normalized ActivityRecord
+    with validation issues flagged, can edit if not approved, then lock
+    records for compliance audit trail.
     """
 
     def __init__(self, tenant, source_system, uploaded_by=None):
@@ -211,12 +128,7 @@ class SAPCSVImporter:
         )
 
         try:
-            text_file = io.TextIOWrapper(
-                uploaded_file.file,
-                encoding="utf-8-sig",
-            )
-
-            reader = csv.DictReader(text_file)
+            reader = open_uploaded_csv(uploaded_file)
 
             if reader.fieldnames is None:
                 batch.status = "failed"
@@ -239,13 +151,15 @@ class SAPCSVImporter:
                 entity_id=batch.id,
                 before=None,
                 after={
+                    "source_type": "sap",
                     "status": batch.status,
                     "total_rows": batch.total_rows,
                     "valid_rows": batch.valid_rows,
                     "invalid_rows": batch.invalid_rows,
                     "suspicious_rows": batch.suspicious_rows,
+                    "approved_rows": batch.approved_rows,
                 },
-                message="SAP CSV file imported and normalized.",
+                message="SAP fuel/procurement CSV imported and normalized.",
             )
 
             return batch
@@ -261,7 +175,10 @@ class SAPCSVImporter:
                 entity_type="ImportBatch",
                 entity_id=batch.id,
                 before=None,
-                after={"error": str(error)},
+                after={
+                    "source_type": "sap",
+                    "error": str(error),
+                },
                 message="SAP CSV import failed.",
             )
 
@@ -282,6 +199,7 @@ class SAPCSVImporter:
                 "Document Number",
                 "Material Document",
                 "Material Doc",
+                "Document No",
                 "Belegnummer",
             ],
         )
@@ -292,6 +210,7 @@ class SAPCSVImporter:
                 "Posting Date",
                 "Document Date",
                 "Buchungsdatum",
+                "PostingDate",
             ],
         )
 
@@ -302,6 +221,7 @@ class SAPCSVImporter:
                 "Werk",
                 "Facility",
                 "Facility Code",
+                "Plant Code",
             ],
         )
 
@@ -310,6 +230,7 @@ class SAPCSVImporter:
             [
                 "Cost Center",
                 "Kostenstelle",
+                "CostCenter",
             ],
         )
 
@@ -320,6 +241,8 @@ class SAPCSVImporter:
                 "Material Description",
                 "Material Name",
                 "Materialkurztext",
+                "Item Description",
+                "Description",
             ],
         )
 
@@ -329,6 +252,8 @@ class SAPCSVImporter:
                 "Quantity",
                 "Qty",
                 "Menge",
+                "Order Quantity",
+                "Movement Quantity",
             ],
         )
 
@@ -350,6 +275,7 @@ class SAPCSVImporter:
                 "Value",
                 "Net Value",
                 "Betrag",
+                "Local Currency Amount",
             ],
         )
 
@@ -358,6 +284,7 @@ class SAPCSVImporter:
             [
                 "Currency",
                 "Währung",
+                "Currency Code",
             ],
         )
 
@@ -380,6 +307,15 @@ class SAPCSVImporter:
                     "severity": "error",
                     "code": "MISSING_PLANT",
                     "message": "SAP row is missing plant/facility code.",
+                }
+            )
+
+        if not material:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "code": "MISSING_MATERIAL_DESCRIPTION",
+                    "message": "SAP row is missing material description.",
                 }
             )
 
@@ -410,7 +346,7 @@ class SAPCSVImporter:
                 }
             )
 
-        if unit and unit_normalized == unit:
+        if unit:
             unit_key = unit.strip().lower()
 
             if unit_key not in UNIT_NORMALIZATION_MAP:
@@ -419,10 +355,19 @@ class SAPCSVImporter:
                         "severity": "warning",
                         "code": "UNKNOWN_UNIT",
                         "message": (
-                            f"Unit '{unit}' was not recognized, so it was not normalized."
+                            f"Unit '{unit}' was not recognized, "
+                            "so the original unit was preserved."
                         ),
                     }
                 )
+        else:
+            issues.append(
+                {
+                    "severity": "error",
+                    "code": "MISSING_UNIT",
+                    "message": "SAP row is missing a unit of measure.",
+                }
+            )
 
         if quantity_original is not None and quantity_original > Decimal("100000"):
             issues.append(
@@ -442,12 +387,7 @@ class SAPCSVImporter:
                 }
             )
 
-        if any(issue["severity"] == "error" for issue in issues):
-            status = "invalid"
-        elif any(issue["severity"] == "warning" for issue in issues):
-            status = "suspicious"
-        else:
-            status = "valid"
+        status = status_from_issues(issues)
 
         activity_record = ActivityRecord.objects.create(
             tenant=self.tenant,

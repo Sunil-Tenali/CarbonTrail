@@ -14,4 +14,5 @@ urlpatterns = [
     # API endpoints under /api/ prefix
     path("api/", include("activities.urls")),      # Activity records: list, retrieve, approve, reject
     path("api/", include("ingestion.urls")),       # Data ingestion: upload, batch tracking
+    path("api/", include("audit.urls")),           # Audit trail: list, retrieve
 ]

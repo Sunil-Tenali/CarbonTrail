@@ -1,45 +1,35 @@
-"""
-Views for audit trail access.
+from rest_framework import generics
+from rest_framework.permissions import AllowAny
 
-Currently empty - audit logs are managed via Django admin.
+from .models import AuditLog
+from .serializers import AuditLogSerializer
 
-AUDIT LOG PURPOSE:
-Compliance requirement: Track all significant changes to emissions data
-enabling audits to prove integrity and identify responsible users.
 
-EVERY ACTION LOGGED:
-- ActivityRecord approved → AuditLog created with before/after
-- ActivityRecord rejected → AuditLog created with reason
-- ActivityRecord updated → Could log in future
-- ImportBatch created → Could log in future
-- User actions → Tied to actor (user who performed action)
+class AuditLogListView(generics.ListAPIView):
+    serializer_class = AuditLogSerializer
+    permission_classes = [AllowAny]
 
-FUTURE ENDPOINTS (if audit API needed):
-GET /api/audit-logs/
-    - List all audit entries
-    - Filter by:
-      * action: "approved", "rejected", "deleted", etc.
-      * entity_type: "ActivityRecord", "ImportBatch", etc.
-      * actor: Which user performed action
-      * date_range: When it happened
-    - For compliance officers to review changes
+    def get_queryset(self):
+        queryset = AuditLog.objects.select_related(
+            "tenant",
+            "actor",
+        ).order_by("-created_at")
 
-GET /api/audit-logs/{id}/
-    - Get detail of single audit event
-    - Show before/after snapshots
-    - Show who, what, when, why
+        tenant_id = self.request.query_params.get("tenant_id")
+        entity_type = self.request.query_params.get("entity_type")
+        entity_id = self.request.query_params.get("entity_id")
+        action = self.request.query_params.get("action")
 
-COMPLIANCE REQUIREMENTS:
-- All approved records must have audit trail
-- Records cannot be modified after approval (is_locked=True)
-- Deletion must be audited
-- Immutable record of all changes for carbon audits
+        if tenant_id:
+            queryset = queryset.filter(tenant_id=tenant_id)
 
-CURRENT IMPLEMENTATION:
-- ActivityRecordViewSet.approve() creates AuditLog
-- ActivityRecordViewSet.reject() creates AuditLog
-- Audit trail visible in Django admin for staff
+        if entity_type:
+            queryset = queryset.filter(entity_type=entity_type)
 
-See: audit/models.py (AuditLog model)
-See: audit/admin.py (admin interface)
-"""
+        if entity_id:
+            queryset = queryset.filter(entity_id=entity_id)
+
+        if action:
+            queryset = queryset.filter(action=action)
+
+        return queryset

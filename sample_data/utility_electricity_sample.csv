@@ -1,0 +1,7 @@
+meter_id,facility_code,billing_period_start,billing_period_end,usage_quantity,usage_unit,demand_kw,tariff_name,amount,currency
+MTR-BLR-001,BLR01,2024-01-01,2024-01-31,42000,kWh,180,HT Industrial,390000,INR
+MTR-HYD-002,HYD02,01/02/2024,29/02/2024,52.4,MWh,210,Commercial TOU,510000,INR
+,BLR01,2024-03-01,2024-03-31,25000,kWh,150,HT Industrial,230000,INR
+MTR-DEL-003,DEL03,2024-04-30,2024-04-01,18000,kWh,110,Commercial,175000,INR
+MTR-MUM-004,MUM04,2024-05-01,2024-05-31,900,units,95,Commercial,88000,INR
+MTR-BLR-999,BLR01,2024-06-01,2024-06-30,1500000,kWh,400,HT Industrial,1250000,INR

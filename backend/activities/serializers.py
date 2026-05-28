@@ -1,11 +1,5 @@
 """
 Serializers for ActivityRecord API responses.
-
-Serializers convert Python objects to/from JSON for REST API:
-- Convert ActivityRecord models to JSON responses
-- Validate input data from clients
-- Hide sensitive fields (if needed)
-- Denormalize related data (tenant_name, issue_count)
 """
 
 from rest_framework import serializers
@@ -15,18 +9,10 @@ from .models import ActivityRecord, ValidationIssue
 
 class ValidationIssueSerializer(serializers.ModelSerializer):
     """
-    Serializes a ValidationIssue - a problem found during import validation.
+    Validation problem found during CSV import.
 
-    Used when returning ActivityRecord details - includes all validation
-    errors/warnings found with that record so client knows why it's
-    flagged as invalid or suspicious.
-
-    FIELDS:
-    - id: Issue identifier
-    - severity: "error" (critical) or "warning" (informational)
-    - code: Machine-readable code (MISSING_FACILITY_ID, OUTLIER_QUANTITY)
-    - message: Human-readable explanation
-    - created_at: When detected
+    Severity is "error" (blocks activity) or "warning" (flag for review).
+    Code is machine-readable (e.g., MISSING_METER_ID) for client filtering.
     """
     class Meta:
         model = ValidationIssue
@@ -41,48 +27,33 @@ class ValidationIssueSerializer(serializers.ModelSerializer):
 
 class ActivityRecordSerializer(serializers.ModelSerializer):
     """
-    Main serializer for ActivityRecord REST API responses.
+    REST API response format for activity records.
 
-    NESTED FIELDS:
-    - issues: List of ValidationIssue objects (read-only)
-    - tenant_name: Organization name (denormalized from tenant.name)
-    - issue_count: Total validation issues found
+    Includes validation issues, tenant name, and raw CSV payload for audit
+    trail. The raw_payload field preserves the original CSV row so analysts
+    can verify exact source data during review.
 
-    READ-ONLY FIELDS:
-    These are set by system, not client:
-    - status: Set by approval workflow
-    - is_locked: Set by approve() action
-    - approved_by: Set by approve() action
-    - approved_at: Set by approve() action
-    - locked_at: Set by approve() action
-    - created_at: Set on creation
-    - updated_at: Set on modification
-
-    EDITABLE FIELDS:
-    Client can update these (if record not locked):
-    - source_type: Where data came from
-    - activity_type: Type of emission
-    - scope: GHG Protocol scope (1/2/3)
-    - facility_code: Organizational location
-    - cost_center: Financial allocation
-    - activity_date: Single date or...
-    - period_start/period_end: ...date range
-    - quantity_original/unit_original: Original as received
-    - quantity_normalized/unit_normalized: Standardized for calculations
-    - amount: Financial value
-    - currency: Currency code
-    - source_reference: External tracking ID
+    Read-only fields (status, approval state, timestamps) are set only by
+    system operations like approve() or reject() to maintain audit integrity.
     """
 
-    # Embed full validation issue details
+    # Nested validation issues for analyst review
     issues = ValidationIssueSerializer(many=True, read_only=True)
-    # Denormalize tenant name (avoids client making extra request)
+    # Denormalize tenant name to avoid extra API call
     tenant_name = serializers.CharField(source="tenant.name", read_only=True)
-    # Calculate issue count for easy dashboard display
+    # Count total issues for dashboard display
     issue_count = serializers.SerializerMethodField()
+    # Preserve original CSV row for audit trail: analysts can verify source data
+    raw_payload = serializers.JSONField(source="raw_row.raw_payload", read_only=True)
+    raw_row_number = serializers.IntegerField(source="raw_row.row_number", read_only=True)
+    import_batch_id = serializers.IntegerField(
+        source="raw_row.import_batch_id",
+        read_only=True,
+    )
 
     class Meta:
         model = ActivityRecord
+        # Fields are grouped by concern: identity, org, classification, timing, quantities, financials, traceability, workflow, validation, lifecycle
         fields = [
             # Identity
             "id",
@@ -132,9 +103,12 @@ class ActivityRecordSerializer(serializers.ModelSerializer):
             # Lifecycle
             "created_at",
             "updated_at",
+            "raw_payload",
+            "raw_row_number",
+            "import_batch_id",
         ]
 
-        # Fields that API should never allow client to modify
+        # These fields are set only by approve()/reject() actions to maintain audit trail
         read_only_fields = [
             "status",
             "is_locked",

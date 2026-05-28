@@ -71,21 +71,12 @@ class ActivityRecordViewSet(
 
     def get_queryset(self):
         """
-        Get filtered list of activity records.
+        Get filtered list of activity records with optional filters.
 
-        OPTIMIZATION:
-        - select_related("tenant", "raw_row"): Join tables to avoid N+1 queries
-        - prefetch_related("issues"): Load validation issues efficiently
-        - order_by("-created_at"): Newest first
+        Filters: tenant_id, status, source_type, scope, activity_type,
+        batch_id, and validation_state (has_issues, no_issues, errors, warnings).
 
-        FILTERS:
-        - tenant_id: Only records for this organization
-        - status: Filter by approval state (valid, suspicious, invalid, approved, rejected)
-        - source_type: Filter by data source (sap, utility, travel)
-
-        EXAMPLE:
-        GET /api/activity-records/?tenant_id=1&status=valid&source_type=sap
-        Returns: Valid SAP records for organization 1
+        Uses select_related and prefetch_related for query efficiency.
         """
         queryset = (
             ActivityRecord.objects
@@ -94,12 +85,35 @@ class ActivityRecordViewSet(
             .order_by("-created_at")
         )
 
-        # Multi-tenancy: Only records for specific organization
         tenant_id = self.request.query_params.get("tenant_id")
-        # Filter by approval status
         status_filter = self.request.query_params.get("status")
-        # Filter by data source
         source_type = self.request.query_params.get("source_type")
+        
+        scope = self.request.query_params.get("scope")
+        activity_type = self.request.query_params.get("activity_type")
+        batch_id = self.request.query_params.get("batch_id")
+        validation_state = self.request.query_params.get("validation_state")
+
+        if scope:
+            queryset = queryset.filter(scope=scope)
+
+        if activity_type:
+            queryset = queryset.filter(activity_type=activity_type)
+
+        if batch_id:
+            queryset = queryset.filter(raw_row__import_batch_id=batch_id)
+
+        if validation_state == "has_issues":
+            queryset = queryset.filter(issues__isnull=False).distinct()
+
+        if validation_state == "no_issues":
+            queryset = queryset.filter(issues__isnull=True)
+
+        if validation_state == "errors":
+            queryset = queryset.filter(issues__severity="error").distinct()
+
+        if validation_state == "warnings":
+            queryset = queryset.filter(issues__severity="warning").distinct()
 
         if tenant_id:
             queryset = queryset.filter(tenant_id=tenant_id)
@@ -116,18 +130,9 @@ class ActivityRecordViewSet(
         """
         Update an entire activity record (PUT).
 
-        Checks if record is locked before allowing edits.
-        Locked records cannot be modified (compliance protection).
-
-        VALID UPDATES:
-        - quantity_original, unit_original: User correction of original data
-        - facility_code, cost_center: Organizational classification
-        - activity_date or period_start/end: Timing information
-
-        PREVENTED EDITS:
-        - status: Only changeable via approve/reject actions
-        - approved_by, approved_at: Set only by approve() action
-        - is_locked, locked_at: Set only by approve() action
+        Locked records prevent modification to enforce compliance and audit
+        immutability. Once an analyst approves a record, it becomes locked
+        and cannot be edited, ensuring audit trail integrity.
         """
         record = self.get_object()
 
@@ -164,32 +169,8 @@ class ActivityRecordViewSet(
     @action(detail=False, methods=["get"])
     def summary(self, request):
         """
-        Get approval statistics across all records.
-
-        Returns count of records in each status:
-        - total: All records
-        - valid: Passed validation
-        - suspicious: Warnings but usable
-        - invalid: Has critical errors
-        - approved: User approved and locked
-        - rejected: User rejected
-
-        EXAMPLE RESPONSE:
-        {
-            "total": 150,
-            "valid": 120,
-            "suspicious": 20,
-            "invalid": 5,
-            "approved": 100,
-            "rejected": 10
-        }
-
-        USEFUL FOR:
-        - Dashboard showing import health
-        - Progress tracking during review
-        - Identifying problematic batches
-
-        Respects tenant_id, status, source_type filters from get_queryset()
+        Get approval statistics (total, valid, suspicious, invalid, approved, rejected).
+        Respects all filters from list endpoint (tenant_id, status, source_type, etc.).
         """
         queryset = self.get_queryset()
 
@@ -207,40 +188,21 @@ class ActivityRecordViewSet(
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
         """
-        Approve an activity record for use in reports.
+        Approve a record for use in reports and lock it for audit immutability.
 
-        PRECONDITIONS:
-        - Record must be "valid" or "suspicious" (not "invalid")
-        - Record must NOT already be locked (prevents double-approving)
+        Preconditions: Record must be "valid" or "suspicious" (not "invalid")
+        and must not already be locked.
 
-        ACTIONS:
-        1. Record status → "approved"
-        2. Record is_locked → True (prevent further edits)
-        3. Capture who approved (approved_by = current user)
-        4. Capture when (approved_at, locked_at timestamps)
-        5. Create AuditLog entry with before/after snapshots
+        Actions:
+        1. Set status to "approved"
+        2. Set is_locked=True to prevent further edits
+        3. Record approved_by (current user) and approved_at (timestamp)
+        4. Create AuditLog entry with before/after snapshots
 
-        DATABASE TRANSACTION:
-        Uses transaction.atomic() to ensure consistency:
-        - If AuditLog creation fails, approval is rolled back
-        - Prevents orphaned audit records
-
-        AUDIT TRAIL:
-        Records the complete state change in AuditLog:
-        - before: Record state before approval
-        - after: Record state after approval (locked=True)
-        - message: "Activity record approved and locked for audit."
-
-        RESPONSE:
-        Returns updated record with new status and approval metadata.
-
-        EXAMPLE:
-        POST /api/activity-records/123/approve/
-        Response: {"id": 123, "status": "approved", "is_locked": true, ...}
+        Returns updated record serialization.
         """
         record = self.get_object()
 
-        # Validation: Can only approve valid/suspicious unlocked records
         if not record.can_be_approved():
             return Response(
                 {
@@ -251,23 +213,17 @@ class ActivityRecordViewSet(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Capture current user (may be None if unauthenticated)
         user = request.user if request.user.is_authenticated else None
-        # Snapshot of record before changes (for audit)
         before_snapshot = build_activity_snapshot(record)
-        # Current time for all timestamp fields
         now = timezone.now()
 
-        # Atomic transaction: Either all succeeds or all rolls back
         with transaction.atomic():
-            # Update record to approved state
             record.status = "approved"
             record.approved_by = user
             record.approved_at = now
             record.is_locked = True
             record.locked_at = now
 
-            # Save only modified fields (efficient, avoids race conditions)
             record.save(
                 update_fields=[
                     "status",
@@ -279,10 +235,8 @@ class ActivityRecordViewSet(
                 ]
             )
 
-            # Capture record state after changes
             after_snapshot = build_activity_snapshot(record)
 
-            # Create audit log entry for compliance
             AuditLog.objects.create(
                 tenant=record.tenant,
                 actor=user,
@@ -294,7 +248,6 @@ class ActivityRecordViewSet(
                 message="Activity record approved and locked for audit.",
             )
 
-        # Return updated record to client
         serializer = self.get_serializer(record)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -302,58 +255,26 @@ class ActivityRecordViewSet(
     @action(detail=True, methods=["post"])
     def reject(self, request, pk=None):
         """
-        Reject an activity record (not usable for reports).
+        Reject an activity record as unusable (unlock so analyst can resubmit).
 
-        PRECONDITIONS:
-        - Record must NOT be locked (cannot reject approved records)
-        - Can reject any status: valid, suspicious, or invalid
-
-        ACTIONS:
-        1. Record status → "rejected"
-        2. DO NOT lock (allows resubmission if user changes mind)
-        3. Create AuditLog entry with reason
-
-        AUDIT TRAIL:
-        Records the rejection with optional reason:
-        - reason: "Rejected during analyst review." (default)
-        - Can be overridden by request.data["reason"]
-
-        DATABASE TRANSACTION:
-        Uses transaction.atomic() for consistency (same as approve()).
-
-        RESPONSE:
-        Returns updated record with status="rejected".
-
-        EXAMPLE:
-        POST /api/activity-records/123/reject/
-        {
-            "reason": "Facility code does not match company records"
-        }
-
-        Response: {"id": 123, "status": "rejected", "is_locked": false, ...}
+        Preconditions: Record must not be locked.
+        Reasons can be provided in request body as {"reason": "..."}
         """
         record = self.get_object()
 
-        # Validation: Cannot reject already-approved (locked) records
         if record.is_locked:
             return Response(
                 {"detail": "This activity record is locked and cannot be rejected."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Capture current user
         user = request.user if request.user.is_authenticated else None
-        # Get optional rejection reason from request payload
         reason = request.data.get("reason", "Rejected during analyst review.")
-        # Snapshot before changes
         before_snapshot = build_activity_snapshot(record)
 
-        # Atomic transaction
         with transaction.atomic():
-            # Update record to rejected state
             record.status = "rejected"
 
-            # Save updated status
             record.save(
                 update_fields=[
                     "status",
@@ -361,10 +282,8 @@ class ActivityRecordViewSet(
                 ]
             )
 
-            # Snapshot after changes
             after_snapshot = build_activity_snapshot(record)
 
-            # Create audit log with rejection reason
             AuditLog.objects.create(
                 tenant=record.tenant,
                 actor=user,
@@ -376,7 +295,6 @@ class ActivityRecordViewSet(
                 message=reason,
             )
 
-        # Return updated record to client
         serializer = self.get_serializer(record)
 
         return Response(serializer.data, status=status.HTTP_200_OK)

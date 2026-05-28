@@ -1,8 +1,8 @@
 from django.urls import path
 
 from .views import (
+    CSVUploadView,
     ImportBatchListView,
-    SAPCSVUploadView,
     SourceSystemListView,
 )
 
@@ -19,8 +19,8 @@ urlpatterns = [
         name="import-batch-list",
     ),
     path(
-        "ingestion/sap/upload/",
-        SAPCSVUploadView.as_view(),
-        name="sap-csv-upload",
+        "ingestion/upload/",
+        CSVUploadView.as_view(),
+        name="csv-upload",
     ),
 ]

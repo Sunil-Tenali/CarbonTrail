@@ -4,7 +4,7 @@ API endpoints for data ingestion pipeline.
 Handles:
 - SourceSystemListView: GET /api/ingestion/source-systems/ - List connected data sources
 - ImportBatchListView: GET /api/ingestion/import-batches/ - Track import sessions
-- SAPCSVUploadView: POST /api/ingestion/sap/upload/ - Upload and process SAP CSV files
+- CSVUploadView: POST /api/ingestion/upload/ - Route CSV to correct importer
 """
 
 from rest_framework import generics, status
@@ -18,15 +18,14 @@ from organizations.models import Tenant
 from .models import ImportBatch, SourceSystem
 from .serializers import ImportBatchSerializer, SourceSystemSerializer
 from .services.sap_csv_importer import SAPCSVImporter
+from .services.utility_csv_importer import UtilityElectricityCSVImporter
+from .services.travel_csv_importer import TravelCSVImporter
 
 
 class SourceSystemListView(generics.ListAPIView):
     """
-    List external data sources (SAP, utilities, travel platforms).
-    
-    Filters:
-    - tenant_id: Organization (multi-tenancy)
-    - source_type: System type (sap, utility, travel)
+    List connected data sources (SAP systems, utility accounts, travel platforms).
+    Filters by tenant_id and source_type.
     """
     serializer_class = SourceSystemSerializer
     permission_classes = [AllowAny]
@@ -51,12 +50,8 @@ class SourceSystemListView(generics.ListAPIView):
 
 class ImportBatchListView(generics.ListAPIView):
     """
-    List import sessions with processing status and statistics.
-    
-    Filters:
-    - tenant_id: Organization
-    - source_type: Data source system
-    - status: Processing state (processing, completed, failed)
+    List CSV import sessions with statistics (total, valid, invalid, suspicious rows).
+    Filters by tenant_id, source_type, and status.
     """
     serializer_class = ImportBatchSerializer
     permission_classes = [AllowAny]
@@ -84,30 +79,40 @@ class ImportBatchListView(generics.ListAPIView):
         return queryset
 
 
-class SAPCSVUploadView(APIView):
+class CSVUploadView(APIView):
     """
-    Upload and process SAP CSV file containing emissions data.
-    
-    Flow:
-    1. Validate file and tenant ID
-    2. Create/find SourceSystem for tenant
-    3. Parse CSV using SAPCSVImporter service
-    4. Create RawActivityRow records (immutable source copy)
-    5. Run validation rules
-    6. Create ActivityRecord with initial status
-    7. Return ImportBatch with statistics
-    
-    Response codes:
-    - 201: Upload successful (batch created)
-    - 400: Invalid input (no file, no tenant, or processing failed)
-    - 404: Tenant not found
+    Upload and route CSV file to correct importer based on source_type.
+
+    Request fields:
+    - tenant_id: Organization ID
+    - source_type: One of 'sap', 'utility', 'travel'
+    - file: CSV file to import
     """
     parser_classes = [MultiPartParser, FormParser]
     permission_classes = [AllowAny]
 
+    IMPORTERS = {
+        "sap": {
+            "class": SAPCSVImporter,
+            "name": "SAP Fuel and Procurement CSV Upload",
+            "description": "SAP flat-file CSV upload for fuel and procurement data.",
+        },
+        "utility": {
+            "class": UtilityElectricityCSVImporter,
+            "name": "Utility Electricity CSV Upload",
+            "description": "Utility portal CSV upload for electricity billing data.",
+        },
+        "travel": {
+            "class": TravelCSVImporter,
+            "name": "Corporate Travel CSV Upload",
+            "description": "Corporate travel CSV upload for flights, hotels, and ground transport.",
+        },
+    }
+
     def post(self, request):
         uploaded_file = request.FILES.get("file")
         tenant_id = request.data.get("tenant_id")
+        source_type = request.data.get("source_type")
 
         if uploaded_file is None:
             return Response(
@@ -121,6 +126,12 @@ class SAPCSVUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if source_type not in self.IMPORTERS:
+            return Response(
+                {"detail": "source_type must be one of: sap, utility, travel."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             tenant = Tenant.objects.get(id=tenant_id)
         except Tenant.DoesNotExist:
@@ -129,41 +140,27 @@ class SAPCSVUploadView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Get or create SAP data source for this organization
+        config = self.IMPORTERS[source_type]
+
         source_system, _created = SourceSystem.objects.get_or_create(
             tenant=tenant,
-            name="SAP Fuel CSV Upload",
-            source_type="sap",
-            defaults={
-                "description": (
-                    "Prototype SAP CSV ingestion for fuel and procurement rows."
-                )
-            },
+            name=config["name"],
+            source_type=source_type,
+            defaults={"description": config["description"]},
         )
 
-        # Capture current user if authenticated
         uploaded_by = request.user if request.user.is_authenticated else None
 
-        # Delegate CSV processing to service layer
-        importer = SAPCSVImporter(
+        importer = config["class"](
             tenant=tenant,
             source_system=source_system,
             uploaded_by=uploaded_by,
         )
 
-        # Import returns ImportBatch with status and validation statistics
         batch = importer.import_file(uploaded_file)
-
         serializer = ImportBatchSerializer(batch)
 
-        # Return error status if processing failed
         if batch.status == "failed":
-            return Response(
-                serializer.data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return Response(serializer.data, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response(
-            serializer.data,
-            status=status.HTTP_201_CREATED,
-        )
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

@@ -10,7 +10,24 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+import dj_database_url
+
+def env_bool(name, default=False):
+    value = os.environ.get(name)
+
+    if value is None:
+        return default
+
+    return value.lower() in ["1", "true", "yes", "on"]
+
+
+def env_list(name, default=""):
+    value = os.environ.get(name, default)
+
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 # Project root directory
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,13 +38,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ============================================================================
 
 # Secret key for cryptographic signing (sessions, CSRF tokens)
-SECRET_KEY = 'django-insecure-0))qam6ln-8zmn2iwba!xx=9#x)u%cw_xm-o!m=!r^tie2$e_='
+SECRET_KEY = os.environ.get(
+    "SECRET_KEY",
+    "django-insecure-local-dev-key-change-me",
+)
 
-# Debug mode - shows detailed error pages (disable in production)
-DEBUG = True
+DEBUG = env_bool("DEBUG", default=True)
 
-# Allowed hostnames (empty = localhost only)
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env_list(
+    "ALLOWED_HOSTS",
+    "127.0.0.1,localhost",
+)
 
 
 # ============================================================================
@@ -53,6 +74,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -90,13 +112,26 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# SQLite for development (use PostgreSQL in production)
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# Database: SQLite for dev convenience, PostgreSQL for production via DATABASE_URL
+# This allows quick local iteration without Docker, and easy production deployment
+# by setting DATABASE_URL=postgres://user:pass@host/db
+DATABASE_URL = os.environ.get("DATABASE_URL")
+
+if DATABASE_URL:
+    DATABASES = {
+        "default": dj_database_url.parse(
+            DATABASE_URL,
+            conn_max_age=600,
+            ssl_require=not DEBUG,
+        )
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 
 # ============================================================================
@@ -116,4 +151,6 @@ USE_I18N = True
 USE_TZ = True
 
 # Static files (CSS, JS, images)
-STATIC_URL = 'static/'
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
