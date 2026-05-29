@@ -8,7 +8,7 @@ The app handles three source types:
 - Utility electricity CSV exports
 - Corporate travel CSV exports
 
-The main thing I focused on was not carbon calculation. I focused on the part the assignment called out as hard: different source shapes, missing fields, inconsistent units, review status, and audit traceability.
+The main thing I focused on was not carbon calculation. I focused on the part of the assignment called out as hard: different source shapes, missing fields, inconsistent units, review status, and audit traceability.
 
 ## Current status
 
@@ -23,17 +23,20 @@ The prototype currently includes:
 - Normalized activity records
 - Scope 1 / Scope 2 / Scope 3 classification
 - Validation issues for invalid or suspicious rows
-- Analyst approve/reject actions
+- Analyst approves/rejects actions
 - Approved rows locked for audit
+- Rejected rows tracked with a reason
 - Audit logs for imports, approvals, and rejections
+- Local SQLite support
+- PostgreSQL support in deployment through `DATABASE_URL.`
 
-Live URLs will be added after deployment:
+## Live URLs
 
-```text
-Frontend URL: TODO
-Backend URL: TODO
-Demo credentials: Not required for this prototype. The endpoints are open for demo purposes.
-```
+Frontend URL: https://carbontrail-frontend.onrender.com  
+Backend API URL: https://carbontrail-backend.onrender.com/api/
+Demo credentials: Not required for this prototype. The current endpoints are open for demo purposes.
+
+The deployed database starts empty. For a clean demo, create a company from the Upload page and upload the three sample CSV files again.
 
 ## Tech stack
 
@@ -46,6 +49,7 @@ Backend:
 - PostgreSQL in deployment through `DATABASE_URL`
 - Gunicorn
 - WhiteNoise
+- django-cors-headers
 
 Frontend:
 
@@ -53,6 +57,12 @@ Frontend:
 - Create React App
 - React Router
 - CSS in `App.css`
+
+Deployment:
+
+- Render Web Service for the backend
+- Render PostgreSQL for the production database
+- Render Static Site for the frontend
 
 ## Project structure
 
@@ -165,6 +175,22 @@ Do not commit `frontend/.env`. Commit `frontend/.env.example` instead.
 13. Reject one row with a reason.
 14. Go to Audit Logs and confirm imported, approved, and rejected events are visible.
 
+## How to demo the live app
+
+1. Open the frontend URL.
+2. Go to Upload CSV.
+3. Add a company, for example `Acme Manufacturing`.
+4. Upload `utility_electricity_sample.csv` as Utility electricity.
+5. Upload `travel_sample.csv` as Corporate travel.
+6. Upload `sap_fuel_procurement_sample.csv` as SAP fuel/procurement.
+7. Open Dashboard and check the counts.
+8. Open Import Batches and confirm the company, source, and file rows.
+9. Open Activity Review and filter by source, scope, status, or issue state.
+10. Open a row detail page.
+11. Approve one valid or suspicious row.
+12. Reject one row with a reason.
+13. Open Audit Logs and confirm imported, approved, and rejected events are visible.
+
 ## Upload API example
 
 From the `backend` folder:
@@ -183,6 +209,8 @@ sap
 utility
 travel
 ```
+
+The selected `source_type` decides which importer reads the file. For example, a utility CSV should be uploaded as `utility`. If the wrong file is uploaded under the wrong source type, the importer may reject it or create validation issues because the expected columns are missing.
 
 ## Tests and checks
 
@@ -253,7 +281,7 @@ SECRET_KEY=replace-with-real-secret
 DEBUG=False
 ALLOWED_HOSTS=your-backend-domain.onrender.com
 DATABASE_URL=postgresql://...
-CORS_ALLOWED_ORIGINS=https://your-frontend-domain.onrender.com
+CORS_ALLOWED_ORIGINS=https://carbontrail-frontend.onrender.com
 CORS_ALLOW_ALL_ORIGINS=False
 ```
 
@@ -263,6 +291,16 @@ Frontend environment variable for deployment:
 REACT_APP_API_BASE_URL=https://your-backend-domain.onrender.com/api
 ```
 
+For the deployed frontend, this value must point to the deployed backend, not localhost.
+
+## Resetting demo data
+
+For local development, imported records can be cleared from the Django shell if the demo data becomes messy.
+
+For deployment, the live PostgreSQL database starts empty. The easiest clean demo flow is to create a company from the frontend and upload the three sample CSV files again.
+
 ## Known limitations
 
-This is still a prototype. It does not include real authentication, role-based permissions, live SAP/Concur/utility API integrations, PDF bill OCR, emissions factor calculations, or background jobs for large files. Those are explained more in `TRADEOFFS.md`.
+This is still a prototype. It does not include real authentication, role-based permissions, live SAP/Concur/utility API integrations, PDF bill OCR, emissions factor calculations, or background jobs for large files.
+
+The app currently focuses on the data ingestion, normalization, validation, review, and audit trail workflow. More production-level tradeoffs are explained in `TRADEOFFS.md`.
