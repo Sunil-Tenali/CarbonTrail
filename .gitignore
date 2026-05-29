@@ -50,3 +50,16 @@ frontend/.env.local
 frontend/.env.development.local
 frontend/.env.test.local
 frontend/.env.production.local
+
+# Environment variables / secrets
+.env
+.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Keep safe templates
+!.env.example
+!backend/.env.example
+!frontend/.env.example
