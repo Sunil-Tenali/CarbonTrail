@@ -1,89 +1,108 @@
 # MODEL.md
 
-This file explains the backend data model for CarbonTrail. The main idea is simple: keep the raw source row untouched, create a normalized activity row for review, and record every important action in an audit log.
+This document explains the data model I used for CarbonTrail and why I chose it.
 
-## Data flow
+The basic idea is:
 
-The backend follows this flow:
+1. Keep the original source row.
+2. Create a normalized activity row from it.
+3. Attach validation issues if something is missing or suspicious.
+4. Let an analyst approve or reject the normalized row.
+5. Lock approved rows and write audit logs.
 
-1. A CSV file is uploaded with `tenant_id`, `source_type`, and `file`.
-2. The upload endpoint chooses the correct importer: SAP, utility, or travel.
-3. An `ImportBatch` is created for the file.
-4. Each CSV row is saved as a `RawActivityRow`.
-5. The importer creates a normalized `ActivityRecord`.
-6. Validation issues are created if the row is invalid or suspicious.
-7. The analyst can approve or reject the `ActivityRecord`.
-8. Approved rows are locked.
-9. Imports and analyst actions are written to `AuditLog`.
+I wanted the model to make the review process easy to explain. If someone asks where a number came from, the app should be able to point back to the uploaded file row and the import batch.
 
-## Main models
+## Main data flow
+
+```text
+Tenant
+  -> SourceSystem
+  -> ImportBatch
+  -> RawActivityRow
+  -> ActivityRecord
+  -> ValidationIssue
+  -> AuditLog
+```
+
+When a CSV is uploaded:
+
+1. The frontend sends `tenant_id`, `source_type`, and the file.
+2. The backend chooses the correct importer.
+3. The backend creates an `ImportBatch`.
+4. Every CSV row is saved as a `RawActivityRow`.
+5. A normalized `ActivityRecord` is created from each raw row.
+6. Validation issues are added when needed.
+7. Analysts can approve or reject records.
+8. Audit logs are written for imports and review actions.
 
 ## Tenant
 
-`Tenant` represents one client organization.
-
-Every important table has a `tenant` foreign key. This is the base of the multi-tenant design.
+`Tenant` represents a client company.
 
 Examples:
 
-- `SourceSystem.tenant`
-- `ImportBatch.tenant`
-- `RawActivityRow.tenant`
-- `ActivityRecord.tenant`
-- `ValidationIssue.tenant`
-- `AuditLog.tenant`
+- Acme Manufacturing
+- Test company
+- A real enterprise client in a production setup
 
-This keeps records tied to one organization. The current API still needs stronger tenant access checks before real production use, but the data model itself is built around tenant ownership.
+Every important model connects back to `Tenant`. That is the base of multi-tenancy in this prototype.
+
+Models with tenant ownership:
+
+- `SourceSystem`
+- `ImportBatch`
+- `RawActivityRow`
+- `ActivityRecord`
+- `ValidationIssue`
+- `AuditLog`
+
+This means rows from one company are not mixed with rows from another company at the data model level. The current prototype still uses open API permissions, so production would need request-level tenant access control too.
 
 ## SourceSystem
 
-`SourceSystem` represents where the data came from.
+`SourceSystem` stores where a file came from.
 
 Supported source types:
 
-- `sap`
-- `utility`
-- `travel`
+```text
+sap
+utility
+travel
+```
 
-For this prototype, the source system is created automatically during upload if it does not already exist for that tenant and source type.
+For this assignment, the source systems are created automatically during upload. For example, if a company uploads a utility file, the backend creates or reuses a source system for utility electricity CSV upload.
 
-Example source systems:
+This helps answer:
 
-- SAP Fuel and Procurement CSV Upload
-- Utility Electricity CSV Upload
-- Corporate Travel CSV Upload
-
-This helps answer: “Which source produced this row?”
+```text
+Which system produced this row?
+```
 
 ## ImportBatch
 
-`ImportBatch` represents one uploaded file.
+`ImportBatch` represents one uploaded CSV file.
 
 It stores:
 
-- tenant
+- company/tenant
 - source system
-- original file name
-- uploaded user, if available
+- original filename
+- uploaded user if available
 - upload time
-- processing status
-- row counts
+- import status
+- total row count
+- valid row count
+- invalid row count
+- suspicious row count
+- approved row count
 
-The row counts are:
-
-- total rows
-- valid rows
-- invalid rows
-- suspicious rows
-- approved rows
-
-This is useful for the upload summary and later review screens.
+This is used by the Import Batches frontend page. I kept batch counts directly on the model because they are useful for the analyst and simple to display.
 
 ## RawActivityRow
 
-`RawActivityRow` is the original CSV row saved as JSON.
+`RawActivityRow` stores the original CSV row as JSON.
 
-This is important because the raw row is the source evidence. The normalized data can change or be reviewed, but the original row should stay available for audit and debugging.
+This is one of the more important parts of the model. The normalized row may be easier to review, but the raw row is the evidence. Analysts can open a row detail page and compare the normalized fields against the original payload.
 
 It stores:
 
@@ -94,227 +113,199 @@ It stores:
 - raw hash
 - created time
 
-The raw hash is generated from the payload. It gives a basic way to detect duplicate-looking rows later, although full duplicate handling is not implemented yet.
+The raw hash is there as a small start toward duplicate detection. I did not build full duplicate handling, but the field gives a place to build from.
 
 ## ActivityRecord
 
-`ActivityRecord` is the normalized row analysts review.
+`ActivityRecord` is the normalized row the analyst reviews.
 
 It stores:
 
+- tenant
+- raw row link
 - source type
 - activity type
-- Scope 1/2/3 classification
+- Scope 1 / Scope 2 / Scope 3 category
 - facility code
 - cost center
-- activity date or period dates
+- activity date or period start/end
 - original quantity and unit
 - normalized quantity and unit
-- amount and currency
-- source reference
-- review status
-- approval details
-- locking details
+- amount and currency when available
+- source reference such as meter ID, SAP document number, or trip ID
+- status
+- approval fields
+- lock fields
 
-The link to `RawActivityRow` is one-to-one. That means one raw row produces one normalized activity record.
+The one-to-one link with `RawActivityRow` keeps the normalized row tied to exactly one source row.
 
 ## ValidationIssue
 
-`ValidationIssue` stores problems found during import.
-
-A row can have multiple issues.
+`ValidationIssue` stores row-level problems found during import.
 
 Severity values:
 
-- `error`: the row is invalid
-- `warning`: the row is suspicious but can still be reviewed
+```text
+error    -> row is invalid
+warning  -> row is suspicious and needs attention
+```
 
 Examples:
 
-- missing utility meter ID
+- missing meter ID
 - invalid billing period
-- unsupported unit
+- unsupported electricity unit
 - missing flight distance
 - missing hotel nights
 - unknown SAP unit
+- suspiciously high quantity
 
-The activity status is decided from the issues:
+The importer uses issues to set the initial activity status:
 
-- any error -> `invalid`
-- warnings only -> `suspicious`
-- no issues -> `valid`
+```text
+error exists       -> invalid
+only warnings      -> suspicious
+no issues          -> valid
+```
+
+I kept validation issues separate from `ActivityRecord` instead of putting one text field on the record. A row can have more than one issue, and the frontend can show each one clearly.
 
 ## AuditLog
 
-`AuditLog` stores important system and analyst actions.
+`AuditLog` records important actions.
 
-It stores:
+Current actions:
+
+- `imported`
+- `import_failed`
+- `approved`
+- `rejected`
+
+The log stores:
 
 - tenant
-- actor
+- actor, if logged in
 - action
 - entity type
-- entity id
+- entity ID
 - before snapshot
 - after snapshot
 - message
-- timestamp
+- created time
 
-Current actions include:
+This is used in both the row detail page and the audit logs page.
 
-- import completed
-- import failed
-- activity approved
-- activity rejected
-
-This is not a replacement for a full compliance audit system, but it proves the basic workflow and gives reviewers a clear trail.
+Approved rows are locked. Rejected rows are not locked, but the rejection is still logged with the reason.
 
 ## Scope categorization
 
-The backend assigns scopes during import.
+The app assigns scope during import.
 
-## SAP
+### SAP
 
-SAP rows are classified from the material text.
+SAP rows are split into fuel and procurement based on material text.
 
-- fuel-like material -> `scope_1`
-- everything else -> `scope_3`
+Fuel-like rows become:
 
-Fuel keywords currently include:
+```text
+activity_type = fuel
+scope = scope_1
+```
 
-- diesel
-- petrol
-- gasoline
-- fuel
-- LPG
-- natural gas
-- CNG
+Other SAP rows become:
 
-This is a prototype shortcut. A production system should use material groups, GL accounts, purchasing categories, or a mapping table.
+```text
+activity_type = procurement
+scope = scope_3
+```
 
-## Utility electricity
+Fuel keywords include terms like diesel, petrol, gasoline, fuel, LPG, natural gas, and CNG.
 
-Utility electricity rows are always assigned `scope_2`.
+This is a practical shortcut for the prototype. In a real SAP setup, I would prefer material groups, GL accounts, purchasing categories, or a customer-specific mapping table.
 
-This matches the idea that purchased electricity is Scope 2 activity data.
+### Utility electricity
 
-## Corporate travel
+Utility electricity rows become:
 
-Travel rows are always assigned `scope_3`.
+```text
+activity_type = electricity
+scope = scope_2
+```
 
-The importer supports:
+Purchased electricity is treated as Scope 2 activity data.
 
-- flights
-- hotels
-- ground transport
+### Corporate travel
 
-Business travel is treated as an indirect emissions source.
+Travel rows become:
+
+```text
+scope = scope_3
+```
+
+Supported activity types:
+
+- flight
+- hotel
+- ground_transport
+
+Business travel is an indirect company activity, so I treated it as Scope 3.
 
 ## Unit normalization
 
-The backend stores both original and normalized quantities.
+The model stores both original and normalized values.
 
-This is intentional.
+Example utility row:
 
-Example:
+```text
+quantity_original = 52.4
+unit_original = MWh
+quantity_normalized = 52400
+unit_normalized = kWh
+```
 
-- original: `2.5 MWh`
-- normalized: `2500 kWh`
+I kept both because the original value is useful for traceability, while the normalized value is useful for review and later calculations.
 
-This gives analysts both the source value and the cleaned value.
+Current normalization examples:
 
-Current normalization:
+- MWh to kWh
+- gallons to liters
+- tonnes to kg
+- liters stay liters
+- kg stays kg
 
-## SAP
+Unknown units are preserved and flagged instead of silently converted.
 
-Supported units include:
+## Review states
 
-- liters / litre / ltr / L -> `L`
-- gallons -> `L`
-- kg -> `kg`
-- tonnes / tons -> `kg`
+Current statuses:
 
-Unknown units are preserved and flagged as warnings.
+```text
+valid
+suspicious
+invalid
+approved
+rejected
+```
 
-## Utility
+The frontend also shows a review label:
 
-Supported units include:
+```text
+approved/rejected -> Already reviewed
+valid/suspicious  -> Needs review
+invalid           -> Needs decision
+```
 
-- kWh -> `kWh`
-- MWh -> `kWh`
+Approved rows are locked because they are considered audit-ready. Rejected rows stay unlocked because they are not being used as approved evidence.
 
-Unsupported electricity units are validation errors.
+## What I would improve next
 
-## Travel
+If this moved toward production, I would add:
 
-Travel currently keeps simple activity units:
-
-- flights: km
-- hotels: night
-- ground transport: km
-
-No CO2e calculation is done yet.
-
-## Source-of-truth tracking
-
-The source-of-truth approach is:
-
-- `SourceSystem` says where the file came from.
-- `ImportBatch` says when the file was uploaded.
-- `RawActivityRow` stores exactly what was in the source row.
-- `ActivityRecord` stores the normalized review version.
-- `AuditLog` records important changes after import.
-
-This means an analyst can trace an approved row back to the original uploaded CSV row.
-
-## Approval locking
-
-`ActivityRecord` has:
-
-- `status`
-- `approved_by`
-- `approved_at`
-- `is_locked`
-- `locked_at`
-
-Only `valid` or `suspicious` unlocked rows can be approved.
-
-When a row is approved:
-
-- status becomes `approved`
-- `is_locked` becomes true
-- approval timestamp is saved
-- audit log is created
-
-Locked rows cannot be edited through the update API.
-
-This matches the assignment requirement that analysts approve rows before they are locked for audit.
-
-## Filtering support
-
-The activity record API supports filters useful for a review dashboard:
-
-- tenant
-- source type
-- scope
-- status
-- activity type
-- import batch
-- validation state
-
-Validation state can filter rows with issues, errors, or warnings.
-
-## Production improvements
-
-If this became a real product, I would improve the model in these ways:
-
-1. Add real authentication and tenant permissions.
-2. Add mapping tables for plant codes, meters, material groups, and travel categories.
-3. Add duplicate detection across import batches using `raw_hash`.
-4. Add a full emissions-factor calculation layer for CO2e.
-5. Add version history for analyst edits, not only approval/rejection snapshots.
-6. Add background jobs for large files.
-7. Add stricter database constraints for approved locked records.
-8. Add file storage for the original uploaded CSV, not only row payloads.
-9. Add support for partial approval by batch and bulk review actions.
-10. Add PostgreSQL indexes after real query patterns are known.
+- real authentication
+- tenant membership and permissions
+- original file storage, probably S3
+- background jobs for large uploads
+- duplicate detection using raw hashes
+- better SAP classification through mapping tables
+- emissions factor models after approval
+- stronger edit history if analysts are allowed to manually edit normalized fields

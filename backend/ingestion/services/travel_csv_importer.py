@@ -27,25 +27,8 @@ class TravelCSVImporter:
     """
     Imports corporate travel CSV exports (flights, hotels, ground transport).
 
-    Real-world data shape:
-    Concur, Navan, and similar expense platforms export trip records with
-    category (flight/hotel/ground), dates, distance, origin/destination
-    (flights), nights (hotels), transport mode (ground), and amount.
-
-    Prototype scope:
-    - Each row is one trip or trip segment
-    - Supports flights (distance km), hotels (nights), ground transport (mode)
-    - All classified as Scope 3 (business travel)
-    - Normalizes ground transport modes (taxi, rental, train, etc.)
-    - Preserves raw rows as RawActivityRow
-    - Validates required fields per category, flags unknown modes
-    - Warnings for missing trip/employee IDs
-
-    GHG Protocol:
-    All business travel is Scope 3 (other indirect). Distance-based
-    (flights, ground) and night-based (hotels) approaches are simplified
-    prototypes; real carbon calculations would use actual emission factors
-    per route/airline/mode and convert to CO2e.
+    All records classified as Scope 3 (business travel).
+    Normalizes transport modes and preserves raw rows for audit trail.
     """
 
     def __init__(self, tenant, source_system, uploaded_by=None):

@@ -11,9 +11,11 @@ class ValidationIssueSerializer(serializers.ModelSerializer):
     """
     Validation problem found during CSV import.
 
-    Severity is "error" (blocks activity) or "warning" (flag for review).
-    Code is machine-readable (e.g., MISSING_METER_ID) for client filtering.
+    Severity is "error" when the row has a real data problem and "warning"
+    when the row can still be reviewed but should get analyst attention.
+    Code is machine-readable so the frontend can filter or group issues.
     """
+
     class Meta:
         model = ValidationIssue
         fields = [
@@ -27,23 +29,21 @@ class ValidationIssueSerializer(serializers.ModelSerializer):
 
 class ActivityRecordSerializer(serializers.ModelSerializer):
     """
-    REST API response format for activity records.
+    REST API response for normalized activity records.
 
-    Includes validation issues, tenant name, and raw CSV payload for audit
-    trail. The raw_payload field preserves the original CSV row so analysts
-    can verify exact source data during review.
-
-    Read-only fields (status, approval state, timestamps) are set only by
-    system operations like approve() or reject() to maintain audit integrity.
+    Includes normalized fields, validation issues, and raw payload.
+    Raw source data is exposed so reviewers can compare original row
+    with the normalized ActivityRecord.
     """
 
-    # Nested validation issues for analyst review
+    # Keep issues nested so the review screen can show problems beside the row.
     issues = ValidationIssueSerializer(many=True, read_only=True)
-    # Denormalize tenant name to avoid extra API call
+
+    # Small denormalized fields make the frontend easier without changing models.
     tenant_name = serializers.CharField(source="tenant.name", read_only=True)
-    # Count total issues for dashboard display
     issue_count = serializers.SerializerMethodField()
-    # Preserve original CSV row for audit trail: analysts can verify source data
+
+    # Raw source evidence is exposed for row detail and audit review.
     raw_payload = serializers.JSONField(source="raw_row.raw_payload", read_only=True)
     raw_row_number = serializers.IntegerField(source="raw_row.row_number", read_only=True)
     import_batch_id = serializers.IntegerField(
@@ -53,14 +53,19 @@ class ActivityRecordSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ActivityRecord
-        # Fields are grouped by concern: identity, org, classification, timing, quantities, financials, traceability, workflow, validation, lifecycle
         fields = [
             # Identity
             "id",
 
-            # Organization (multi-tenancy)
+            # Multi-tenancy
             "tenant",
             "tenant_name",
+
+            # Raw row link and source evidence
+            "raw_row",
+            "raw_payload",
+            "raw_row_number",
+            "import_batch_id",
 
             # Classification
             "source_type",
@@ -76,20 +81,20 @@ class ActivityRecordSerializer(serializers.ModelSerializer):
             "period_start",
             "period_end",
 
-            # Quantity & units
+            # Quantity and unit normalization
             "quantity_original",
             "unit_original",
             "quantity_normalized",
             "unit_normalized",
 
-            # Financial
+            # Financial context, if the source provides it
             "amount",
             "currency",
 
-            # Traceability
+            # Source-of-truth reference, such as meter ID, SAP document, or trip ID
             "source_reference",
 
-            # Workflow state
+            # Analyst workflow and audit lock
             "status",
             "is_locked",
             "approved_by",
@@ -103,22 +108,25 @@ class ActivityRecordSerializer(serializers.ModelSerializer):
             # Lifecycle
             "created_at",
             "updated_at",
+        ]
+
+        read_only_fields = [
+            "id",
+            "tenant_name",
             "raw_payload",
             "raw_row_number",
             "import_batch_id",
-        ]
-
-        # These fields are set only by approve()/reject() actions to maintain audit trail
-        read_only_fields = [
             "status",
             "is_locked",
             "approved_by",
             "approved_at",
             "locked_at",
+            "issue_count",
+            "issues",
             "created_at",
             "updated_at",
         ]
 
     def get_issue_count(self, obj):
-        """Count total validation issues for display purposes"""
+        """Count validation issues without making the frontend calculate it."""
         return obj.issues.count()

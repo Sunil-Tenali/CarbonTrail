@@ -9,14 +9,10 @@ from .models import AuditLog
 
 class AuditLogSerializer(serializers.ModelSerializer):
     """
-    Audit trail entry showing who did what and when.
-
-    Denormalized fields (actor_email, tenant_name) avoid extra API calls.
-    before/after snapshots enable compliance audits to verify data integrity.
+    Audit trail entry: who did what, when, with before/after snapshots.
+    All fields are read-only since audit logs are immutable.
     """
-    # Denormalize actor email to avoid extra API call for user details
     actor_email = serializers.EmailField(source="actor.email", read_only=True)
-    # Denormalize tenant name for easier filtering and display
     tenant_name = serializers.CharField(source="tenant.name", read_only=True)
 
     class Meta:

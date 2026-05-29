@@ -26,24 +26,8 @@ class UtilityElectricityCSVImporter:
     """
     Imports utility electricity billing CSV exports.
 
-    Real-world data shape:
-    Utility portals and Green Button downloads provide billing period
-    snapshots with meter ID, facility code, usage quantity, unit (kWh),
-    demand (kW), billing start/end dates, and amount.
-
-    Prototype scope:
-    - Handles billing period exports, not live meter API data
-    - Each row is one meter's billing period
-    - Normalizes units (kWh, MWh)
-    - All records classified as Scope 2 (purchased electricity)
-    - Preserves raw rows as RawActivityRow
-    - Validates meter ID presence, date ranges, usage > 0
-    - Flags missing or invalid dates, unsupported units, high usage anomalies
-
-    GHG Protocol:
-    Purchased electricity is Scope 2 regardless of source (grid, renewable
-    credits). This prototype only handles electricity; natural gas, water,
-    and steam imports would be similar but separate importers.
+    All records classified as Scope 2 (purchased electricity).
+    Normalizes units (kWh, MWh) and preserves raw rows for audit trail.
     """
 
     def __init__(self, tenant, source_system, uploaded_by=None):

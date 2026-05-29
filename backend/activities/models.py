@@ -1,20 +1,12 @@
 """
 Activities app - Core emissions data model for CarbonTrail.
 
-This is the central business logic module. ActivityRecord represents
-processed emissions data ready for reporting and compliance.
-
 DATAFLOW:
 1. RawActivityRow imported from external system
 2. Validation rules applied, issues collected
 3. ActivityRecord created with initial status
-4. User reviews and approves records
-5. Approved activities used in reports
-
-GHG PROTOCOL SCOPES (international standard):
-- Scope 1: Direct emissions (company vehicles, on-site fuel)
-- Scope 2: Indirect energy (purchased electricity)
-- Scope 3: Other indirect (business travel, supply chain)
+4. Analyst reviews and approves records
+5. Approved records locked for compliance audit
 """
 
 from django.conf import settings
@@ -25,17 +17,10 @@ from ingestion.models import RawActivityRow
 
 class ActivityRecord(models.Model):
     """
-    A single emissions activity record for reporting and compliance.
+    Normalized emissions activity record for review and reporting.
 
-    This is the primary data model - each record represents one emissions
-    event or consumption period from an organization.
-
-    DESIGN NOTES:
-    - source_type: WHERE data came from (SAP, utility, travel system)
-    - activity_type: WHAT was emitted (fuel, electricity, flight, etc.)
-    - Stores both original and normalized quantities for audit trail
-    - Status workflow: valid → suspicious → invalid or → approved/rejected
-    - is_locked: Prevents modification for compliance period immutability
+    Stores both original and normalized quantities for audit trail.
+    Analyst workflow: review validation issues → approve/reject → lock.
     """
 
     # Classification choices for emissions tracking
@@ -57,9 +42,9 @@ class ActivityRecord(models.Model):
 
     # GHG Protocol standard scopes
     SCOPE_CHOICES = [
-        ("scope_1", "Scope 1"),  # Direct emissions
-        ("scope_2", "Scope 2"),  # Indirect energy
-        ("scope_3", "Scope 3"),  # Other indirect
+        ("scope_1", "Scope 1"),  # Direct emissions (company vehicles, on-site fuel)
+        ("scope_2", "Scope 2"),  # Indirect energy (purchased electricity)
+        ("scope_3", "Scope 3"),  # Other indirect (business travel, procurement)
         ("unknown", "Unknown"),
     ]
 
@@ -68,8 +53,8 @@ class ActivityRecord(models.Model):
         ("valid", "Valid"),          # Passed validation
         ("suspicious", "Suspicious"),  # Warnings but usable
         ("invalid", "Invalid"),    # Has errors
-        ("approved", "Approved"),  # User approved
-        ("rejected", "Rejected"),  # User rejected
+        ("approved", "Approved"),  # Analyst approved
+        ("rejected", "Rejected"),  # Analyst rejected
     ]
 
     # Multi-tenancy: Every activity belongs to one organization
@@ -160,10 +145,7 @@ class ActivityRecord(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def can_be_approved(self):
-        """
-        Check if record can be approved.
-        Only valid/suspicious records and unlocked records can be approved.
-        """
+        """Check if record is valid/suspicious and not locked."""
         return self.status in ["valid", "suspicious"] and not self.is_locked
 
     def __str__(self):
@@ -172,17 +154,10 @@ class ActivityRecord(models.Model):
 
 class ValidationIssue(models.Model):
     """
-    A validation problem found with an ActivityRecord.
+    A validation problem found during CSV import.
 
-    Validation rules are applied during import:
-    - Errors: Critical issues preventing use (invalid format, missing data)
-    - Warnings: Issues worth noting but data still usable (outliers)
-
-    Examples:
-    - Error: "MISSING_FACILITY_ID" - Facility code required
-    - Warning: "OUTLIER_QUANTITY" - Usage 10x above normal
-    - Error: "INVALID_SCOPE" - Scope type not recognized
-    - Warning: "FUTURE_DATE" - Activity date in future
+    Errors block use (invalid format, missing required data).
+    Warnings flag for review but don't block use (outliers, anomalies).
     """
 
     SEVERITY_CHOICES = [

@@ -5,9 +5,7 @@ from decimal import Decimal, InvalidOperation
 
 
 def open_uploaded_csv(uploaded_file):
-    """
-    Open uploaded CSV file and return DictReader.
-    """
+    """Open CSV file and return DictReader."""
     text_file = io.TextIOWrapper(uploaded_file.file, encoding="utf-8-sig")
     return csv.DictReader(text_file)
 
@@ -39,10 +37,7 @@ def get_first_value(row, possible_column_names):
 
 
 def parse_decimal(value):
-    """
-    Parse text numbers with flexible decimal/thousands separators.
-    Returns None if invalid.
-    """
+    """Parse text numbers (handles comma/period variations). Returns None if invalid."""
     if value is None:
         return None
 
@@ -64,10 +59,7 @@ def parse_decimal(value):
 
 
 def parse_date(value):
-    """
-    Parse date from multiple formats (real-world CSVs use different standards).
-    Returns None if unparseable.
-    """
+    """Parse date from multiple formats. Returns None if unparseable."""
     if value is None:
         return None
 
@@ -94,10 +86,7 @@ def parse_date(value):
 
 
 def status_from_issues(issues):
-    """
-    Map validation issues to activity record status.
-    Errors block processing; warnings flag for review.
-    """
+    """Map validation issues to record status: errors → invalid, warnings → suspicious, else valid."""
     if any(issue["severity"] == "error" for issue in issues):
         return "invalid"
 

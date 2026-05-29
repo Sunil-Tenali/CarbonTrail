@@ -76,8 +76,8 @@ def normalize_unit(quantity, unit):
 def classify_activity(material_name):
     """
     Classify SAP material as fuel (Scope 1) or procurement (Scope 3).
-    Scope 1: direct company operations (company vehicles, on-site fuel).
-    Scope 3: purchased goods and services (procurement).
+    - Fuel (Scope 1): Direct emissions from company operations
+    - Procurement (Scope 3): Purchased goods and services
     """
     material_text = str(material_name or "").lower()
 
@@ -92,25 +92,11 @@ class SAPCSVImporter:
     """
     Imports SAP fuel and procurement CSV exports.
 
-    Real-world data shape:
-    SAP MMBE/MOUT exports provide material documents with quantities,
-    units, and plant codes. This prototype handles flat CSV exports with
-    columns like Document Number, Material, Quantity, UoM, Plant, Plant,
-    Posting Date, and Amount.
+    Classifies materials as:
+    - Fuel (Scope 1): Direct company operations
+    - Procurement (Scope 3): Purchased goods and services
 
-    Prototype scope:
-    - Handles historical CSV snapshots, not live SAP API data
-    - Normalizes units (L, kg, tonnes)
-    - Classifies materials as fuel (Scope 1) or procurement (Scope 3)
-      using keyword detection on material names
-    - Preserves all raw rows as RawActivityRow for audit trail
-    - Creates ActivityRecord for each row with validation issues for
-      missing fields, invalid dates, outlier quantities
-
-    Design:
-    Raw source data is immutable. Analysts see normalized ActivityRecord
-    with validation issues flagged, can edit if not approved, then lock
-    records for compliance audit trail.
+    Normalizes units (L, kg, tonnes) and preserves raw rows for audit trail.
     """
 
     def __init__(self, tenant, source_system, uploaded_by=None):

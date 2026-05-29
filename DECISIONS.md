@@ -1,220 +1,185 @@
 # DECISIONS.md
 
-This file explains the main choices I made for the backend prototype. I tried to keep the project small enough to understand, but still close to the assignment problem: messy enterprise data that needs to be normalized and reviewed before audit.
+This file explains the choices I made while building CarbonTrail. I tried to keep the prototype realistic but still small enough to finish and defend.
 
-## Current backend scope
+## 1. I used CSV upload for all three sources
 
-The backend currently handles:
+I chose CSV upload for SAP, utility electricity, and travel.
 
-- CSV upload for SAP fuel/procurement data
-- CSV upload for utility electricity data
-- CSV upload for corporate travel data
-- raw row preservation
-- normalized `ActivityRecord` creation
-- validation issues
-- approval and rejection workflow
-- locking approved rows
-- audit logs for imports and analyst actions
-- SQLite locally, with PostgreSQL support through `DATABASE_URL`
+The assignment allowed different ingestion mechanisms. I picked CSV because it is realistic for onboarding and easy to test in a demo. A lot of enterprise work starts with exported files before API access is ready.
 
-The frontend is not covered in this backend-only pass. It will be added later.
+I did not choose live APIs because SAP, utility portals, Concur, or Navan would all need credentials and customer-specific setup. That would make the prototype harder to run and review.
 
-## Why I used file upload for all three sources
+The current upload endpoint is:
 
-The assignment allowed choosing the ingestion mechanism. I chose CSV upload for this prototype because it is realistic for a 4-day onboarding prototype.
+```text
+POST /api/ingestion/upload/
+```
 
-In a real enterprise setup, SAP, utilities, and travel platforms could be connected through APIs, scheduled jobs, SFTP, or middleware. But for a prototype, requiring real credentials for SAP, utility portals, or Concur/Navan would slow the work down and make the demo harder to run.
+The frontend sends:
 
-CSV upload keeps the focus on the harder part of the assignment: preserving messy source data, normalizing it, flagging bad rows, and giving analysts a review workflow.
+```text
+tenant_id
+source_type
+file
+```
 
-## SAP decision
+`source_type` decides which importer runs.
 
-### What I chose
+## 2. I chose a flat SAP CSV export
 
-I handled SAP as a flat CSV export for fuel and procurement-like rows.
+SAP can expose data in several ways: IDocs, OData APIs, BAPIs, reports, and flat files. For this prototype I chose a flat CSV export that looks like a material/procurement movement report.
 
-The importer accepts common SAP-style column names such as:
+The importer handles fields like:
 
-- `Document Number`
-- `Posting Date`
-- `Plant`
-- `Material`
-- `Quantity`
-- `UoM`
-- `Amount`
-- `Currency`
+- document number
+- posting date
+- plant/facility
+- material description
+- quantity
+- unit of measure
+- amount
+- currency
 
-It also supports some alternate names like German column names (`Werk`, `Buchungsdatum`, `Belegnummer`) because SAP exports are often customized.
+I also allowed some alternate column names, including German-style SAP labels like `Werk` and `Buchungsdatum`.
 
-### Why
+I ignored IDocs, direct SAP OData pulls, and full material master lookups because those would require a much larger setup.
 
-SAP can expose data in many ways: IDocs, BAPIs, OData services, flat files, and custom reports. For this prototype, a flat file is easier to demo and still realistic because many teams export SAP reports into CSV during onboarding.
+## 3. I used keyword classification for SAP fuel vs procurement
 
-The importer keeps the subset small:
+SAP fuel rows are classified using material text. If the material contains words like diesel, fuel, petrol, LPG, natural gas, or CNG, the row is treated as fuel.
 
-- material/document rows only
-- plant/facility code tracking
-- mixed date parsing
-- basic unit normalization
-- simple classification into fuel or procurement
+That becomes:
 
-### How Scope is assigned
+```text
+fuel -> Scope 1
+```
 
-- If the material text contains words like `diesel`, `petrol`, `fuel`, `lpg`, `natural gas`, or `cng`, the row is treated as fuel and assigned `scope_1`.
-- Otherwise, the row is treated as procurement and assigned `scope_3`.
+Everything else becomes procurement:
 
-This is simple, but defendable for a prototype. In production I would not rely only on keyword matching. I would use material master data, GL accounts, purchasing categories, or a mapping table maintained by the sustainability/finance team.
+```text
+procurement -> Scope 3
+```
 
-## Utility electricity decision
+This is not production-grade, but it is understandable for a prototype. In a real client setup, I would ask for material groups, GL accounts, purchasing categories, or a mapping table.
 
-### What I chose
+## 4. I chose utility portal CSV instead of PDF bills
 
-I handled utility data as a portal-style electricity CSV export.
+Utility bills often arrive as PDFs, but PDF extraction is messy. The same field can appear in different layouts, pages, and table formats. OCR can also misread numbers.
 
-The expected fields are close to what a facilities team might export:
+For this prototype I chose a utility portal CSV export. That still lets the app handle realistic utility problems:
 
-- `meter_id`
-- `facility_code`
-- `billing_period_start`
-- `billing_period_end`
-- `usage_quantity`
-- `usage_unit`
-- `demand_kw`
-- `tariff_name`
-- `amount`
-- `currency`
+- meter IDs
+- billing periods
+- kWh and MWh
+- demand kW
+- tariff names
+- invalid date ranges
+- missing meters
+- unusually high usage
 
-### Why
+I did not build PDF OCR because it would take time away from the main data model and review workflow.
 
-The assignment mentions PDF bills, portal scrapes, and utility APIs. I chose portal CSV because PDF parsing/OCR would become a separate project by itself, and utility APIs are not available everywhere.
+## 5. I treated electricity as Scope 2
 
-A billing-period CSV still captures the important utility problems:
+Utility electricity rows are always imported as:
 
-- meters belong to facilities
-- billing periods do not always match calendar months
-- units may be kWh or MWh
-- some rows can have missing meters or invalid date ranges
+```text
+activity_type = electricity
+scope = scope_2
+```
 
-### How Scope is assigned
+That matches the usual treatment of purchased electricity as Scope 2 activity data.
 
-All utility electricity rows are assigned `scope_2`, because purchased electricity is Scope 2 activity data.
+## 6. I chose travel platform CSV for flights, hotels, and ground transport
 
-### Unit handling
+For corporate travel, I modeled the source as a Concur/Navan-style CSV export.
 
-The importer normalizes:
+The importer supports:
 
-- `kWh` to `kWh`
-- `MWh` to `kWh` by multiplying by 1000
+- flights
+- hotels
+- ground transport
 
-Unsupported units are flagged as validation errors.
+Flights use airport codes and distance when available. Hotels use nights. Ground transport uses mode and distance.
 
-## Corporate travel decision
+All travel rows are treated as Scope 3 because business travel is an indirect company activity.
 
-### What I chose
+## 7. I preserved raw rows separately from normalized rows
 
-I handled travel as a Concur/Navan-style travel CSV with three categories:
+This was one of the most important choices.
 
-- `flight`
-- `hotel`
-- `ground_transport`
+The raw CSV row is stored in `RawActivityRow`. The cleaned review row is stored in `ActivityRecord`.
 
-The importer supports fields such as:
+That means analysts can review the normalized row without losing the original source evidence. It also makes debugging easier when a number looks wrong.
 
-- `trip_id`
-- `employee_id`
-- `category`
-- `booking_date`
-- `start_date`
-- `end_date`
-- `origin_airport`
-- `destination_airport`
-- `distance_km`
-- `hotel_nights`
-- `ground_transport_mode`
-- `amount`
-- `currency`
+## 8. I used validation issues instead of only one status field
 
-### Why
+A row can have more than one problem. For example, a utility row could have a missing meter ID and an unsupported unit.
 
-Travel platforms usually have booking, itinerary, and expense information, but the exact field names vary by customer setup. I kept the importer focused on one clean CSV shape that still represents realistic categories.
+So I used a separate `ValidationIssue` model.
 
-### How Scope is assigned
+The row status is based on those issues:
 
-All travel rows are assigned `scope_3`, because business travel is an indirect emissions category.
+```text
+error issue    -> invalid
+warning issue  -> suspicious
+no issue       -> valid
+```
 
-### Validation choices
+This gives the frontend enough detail to show what failed and why.
 
-The importer checks different fields depending on the category:
+## 9. Approved rows are locked
 
-- flights need airport codes and distance
-- hotels need number of nights
-- ground transport needs a recognizable mode
+When an analyst approves a row, the backend sets:
 
-This lets the backend catch category-specific problems without building a full travel calculation engine.
+```text
+status = approved
+is_locked = true
+```
 
-## Raw row and normalized record decision
+The row cannot be edited after that. I did this because approval means the row is now audit-ready, and changing it later without a new workflow would be risky.
 
-I split source data into two layers:
+Rejected rows are not locked. They are marked rejected and an audit log is created with the rejection reason.
 
-1. `RawActivityRow` keeps the original CSV row as JSON.
-2. `ActivityRecord` stores the normalized version analysts review.
+## 10. I kept authentication simple for the prototype
 
-I did this because the raw row is the source evidence. If an analyst asks, “What exactly came from SAP or the utility file?”, the raw payload is still available.
+The current API uses permissive access. That made the app easier to test and demo.
 
-The normalized row is allowed to have cleaner fields like `scope`, `activity_type`, `quantity_normalized`, and `unit_normalized`.
+For production, this would need to change. I would add:
 
-## Approval and locking decision
+- login
+- tenant membership
+- analyst/admin roles
+- request-level tenant filtering
+- proper DRF permissions
 
-Only `valid` and `suspicious` unlocked records can be approved. Once approved, the row becomes locked.
+The data model already has tenant ownership, but permissions are not complete yet.
 
-I chose this because the assignment specifically says analysts should approve rows before they are locked for audit. A locked row should not be edited later because that would weaken the audit trail.
+## 11. I used SQLite locally and PostgreSQL for deployment
 
-Rejected rows are not locked. My thinking is that rejected rows may need to be replaced or re-uploaded with better source data.
+SQLite is simple for local development.
 
-## Validation issue decision
+For deployment, the app reads `DATABASE_URL`. If that variable is set, Django uses PostgreSQL through `dj-database-url` and `psycopg`.
 
-I used separate `ValidationIssue` rows instead of putting one error message directly on `ActivityRecord`.
+So the same code can run locally and on Render/Railway:
 
-That gives more flexibility because a single imported row can have multiple problems. For example, a utility row might have both a missing meter ID and an invalid billing period.
-
-I used two severities:
-
-- `error`: row is invalid
-- `warning`: row is suspicious but can still be reviewed
-
-## Authentication decision
-
-The API currently uses `AllowAny` because the focus was ingestion and review workflow, not user authentication.
-
-This is not production-ready security. Before deployment for real users, I would add authentication and tenant-based access checks so users can only see their own organization’s data.
-
-## Database decision
-
-Local development uses SQLite because it is quick and easy to run.
-
-Deployment should use PostgreSQL through `DATABASE_URL`. The settings file supports this, so the same code can use SQLite locally and PostgreSQL on Render/Railway/Fly.
-
-## What I ignored for now
-
-I deliberately did not build:
-
-- real SAP API connection
-- real utility portal scrape or PDF OCR
-- real Concur/Navan OAuth integration
-- emissions-factor calculations
-- tenant-specific source mapping UI
-- user roles and permissions
-- frontend dashboard in this backend-only pass
+```text
+local without DATABASE_URL -> SQLite
+production with DATABASE_URL -> PostgreSQL
+```
 
 ## Questions I would ask the PM
 
-1. Which SAP export should we standardize on for the first client: custom report, OData, IDoc, or manual CSV?
-2. Does the client already have plant-to-facility mapping somewhere?
-3. For procurement, do we need category mapping from GL accounts, material groups, or vendor types?
-4. For electricity, do we receive one meter per facility or multiple meters per facility?
-5. Do utility billing periods need to be split into calendar months for reporting?
-6. For travel, should missing flight distance be calculated from airport codes or flagged for analyst review?
-7. Should analysts be allowed to edit normalized rows, or only approve/reject them?
-8. After approval, who is allowed to unlock a row if a mistake is found?
-9. Are we expected to calculate CO2e in this prototype, or only normalize activity data?
-10. What deployment provider and database should be used for final submission?
+If this were a real onboarding project, I would ask:
+
+1. Do we expect file uploads only, or do we need SAP/Concur/utility API pulls?
+2. What SAP fields does the client actually export?
+3. Do they have material groups or GL account mappings for fuel/procurement classification?
+4. Are plant codes already mapped to facilities?
+5. Should utility billing periods be allocated into calendar months?
+6. Do we need to store original uploaded files, not just row payloads?
+7. Should rejected rows be editable and resubmitted?
+8. Who is allowed to approve rows?
+9. Do auditors need a downloadable evidence package?
+10. Should emissions factors be added now or after activity data approval?

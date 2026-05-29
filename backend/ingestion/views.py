@@ -65,7 +65,7 @@ class ImportBatchListView(generics.ListAPIView):
 
         tenant_id = self.request.query_params.get("tenant_id")
         source_type = self.request.query_params.get("source_type")
-        status_filter = self.request.query_params.get("status")
+        status_value = self.request.query_params.get("status")
 
         if tenant_id:
             queryset = queryset.filter(tenant_id=tenant_id)
@@ -73,8 +73,8 @@ class ImportBatchListView(generics.ListAPIView):
         if source_type:
             queryset = queryset.filter(source_system__source_type=source_type)
 
-        if status_filter:
-            queryset = queryset.filter(status=status_filter)
+        if status_value:
+            queryset = queryset.filter(status=status_value)
 
         return queryset
 

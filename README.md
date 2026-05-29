@@ -1,188 +1,173 @@
-# CarbonTrail Backend
+# CarbonTrail
 
-CarbonTrail is a backend prototype for the Breathe ESG tech intern assignment.
+CarbonTrail is my prototype for the Breathe ESG tech intern assignment. It is a Django REST + React app for taking messy company activity data, normalizing it, and giving an analyst a place to review the rows before they are treated as audit-ready.
 
-The goal is to ingest messy activity data from different enterprise sources, normalize it, and let an analyst review the rows before they are locked for audit.
+The app handles three source types:
 
-This ZIP/documentation pass is backend-only. The React frontend will be added later.
+- SAP fuel and procurement CSV exports
+- Utility electricity CSV exports
+- Corporate travel CSV exports
 
-## What the backend does
+The main thing I focused on was not carbon calculation. I focused on the part the assignment called out as hard: different source shapes, missing fields, inconsistent units, review status, and audit traceability.
 
-The Django REST backend supports three upload types:
+## Current status
 
-1. SAP fuel/procurement CSV
-2. Utility electricity CSV
-3. Corporate travel CSV
+The prototype currently includes:
 
-For each uploaded CSV, the backend:
-
-- creates an import batch
-- saves every original CSV row as raw JSON
-- creates a normalized activity record
-- assigns Scope 1, 2, or 3
-- normalizes units where supported
-- creates validation issues for bad or suspicious rows
-- allows analysts to approve or reject rows
-- locks approved rows
-- writes audit logs for imports and analyst actions
-
-## What is not done yet
-
-This backend does not currently include:
-
+- Django REST backend
 - React frontend dashboard
-- deployed live URL
-- real login/tenant permissions
-- real SAP, utility, Concur, or Navan integrations
-- PDF bill OCR
-- CO2e emissions-factor calculations
-- production file storage for uploaded CSV files
+- Company/tenant creation from the frontend
+- CSV upload for SAP, utility electricity, and travel
+- Import batch tracking
+- Raw row preservation
+- Normalized activity records
+- Scope 1 / Scope 2 / Scope 3 classification
+- Validation issues for invalid or suspicious rows
+- Analyst approve/reject actions
+- Approved rows locked for audit
+- Audit logs for imports, approvals, and rejections
 
-The backend has deployment-oriented settings, but deployment itself still needs to be done.
+Live URLs will be added after deployment:
+
+```text
+Frontend URL: TODO
+Backend URL: TODO
+Demo credentials: Not required for this prototype. The endpoints are open for demo purposes.
+```
 
 ## Tech stack
+
+Backend:
 
 - Python
 - Django
 - Django REST Framework
-- SQLite for local development
-- PostgreSQL support through `DATABASE_URL`
-- WhiteNoise for static files during deployment
-- Gunicorn for production serving
+- SQLite locally
+- PostgreSQL in deployment through `DATABASE_URL`
+- Gunicorn
+- WhiteNoise
+
+Frontend:
+
+- React
+- Create React App
+- React Router
+- CSS in `App.css`
 
 ## Project structure
 
 ```text
-backend/
-  activities/      Normalized activity records, validation issues, review workflow
-  audit/           Audit logs for imports and analyst actions
-  config/          Django settings and URLs
-  ingestion/       Source systems, import batches, raw rows, CSV importers
-  organizations/   Tenant model for multi-tenancy
-  manage.py
+CarbonTrail/
+  backend/
+    activities/        Activity records, validation issues, review actions
+    audit/             Audit log model and API
+    config/            Django settings and root URLs
+    ingestion/         Import batches, raw rows, source systems, CSV importers
+    organizations/     Company/tenant model and API
+    manage.py
+
+  frontend/
+    src/
+      api.js
+      App.js
+      App.css
+      pages/
+        DashboardPage.js
+        UploadPage.js
+        BatchesPage.js
+        RecordsPage.js
+        RecordDetailPage.js
+        AuditLogsPage.js
+
+  sample_data/
+    sap_fuel_procurement_sample.csv
+    utility_electricity_sample.csv
+    travel_sample.csv
+
+  README.md
+  MODEL.md
+  DECISIONS.md
+  TRADEOFFS.md
+  SOURCES.md
 ```
 
-## Main API endpoints
+## Backend setup
+
+From the project root:
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r ..\requirements.txt
+python manage.py migrate
+python manage.py runserver
+```
+
+The backend runs at:
 
 ```text
-GET  /api/source-systems/
+http://127.0.0.1:8000
+```
+
+Useful API endpoints:
+
+```text
+GET  /api/tenants/
+POST /api/tenants/
 GET  /api/import-batches/
 POST /api/ingestion/upload/
 GET  /api/activity-records/
 GET  /api/activity-records/{id}/
-GET  /api/activity-records/summary/
 POST /api/activity-records/{id}/approve/
 POST /api/activity-records/{id}/reject/
 GET  /api/audit-logs/
 ```
 
-## Local setup
+## Frontend setup
 
-From the backend folder:
-
-```powershell
-cd backend
-```
-
-Create and activate a virtual environment if needed:
+In a second terminal:
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
+cd frontend
+npm install
+npm start
 ```
 
-Install dependencies.
-
-If `requirements.txt` exists:
-
-```powershell
-pip install -r requirements.txt
-```
-
-If it has not been generated yet, install the needed packages manually:
-
-```powershell
-uv pip install Django djangorestframework django-cors-headers gunicorn whitenoise dj-database-url "psycopg[binary]"
-```
-
-Then create `requirements.txt` before submission:
-
-```powershell
-uv pip freeze > requirements.txt
-```
-
-## Environment variables
-
-Copy the example env file:
-
-```powershell
-copy .env.example .env
-```
-
-For local development, SQLite is used automatically if `DATABASE_URL` is not set.
-
-Important variables:
+The frontend runs at:
 
 ```text
-SECRET_KEY=change-me
-DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
-CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-DATABASE_URL=
+http://localhost:3000
 ```
 
-For deployment, set `DATABASE_URL` to a PostgreSQL URL from Render, Railway, Fly, or another provider.
+For local development, `frontend/.env` should contain:
 
-## Database setup
-
-Run migrations:
-
-```powershell
-uv run python manage.py makemigrations
-uv run python manage.py migrate
+```env
+REACT_APP_API_BASE_URL=http://127.0.0.1:8000/api
 ```
 
-Create an admin user:
+Do not commit `frontend/.env`. Commit `frontend/.env.example` instead.
 
-```powershell
-uv run python manage.py createsuperuser
-```
+## How to demo locally
 
-Start the server:
+1. Start the backend.
+2. Start the frontend.
+3. Open `http://localhost:3000`.
+4. Go to Upload CSV.
+5. Add a company, for example `Acme Manufacturing`.
+6. Upload the utility sample as `Utility electricity`.
+7. Upload the travel sample as `Corporate travel`.
+8. Upload the SAP sample as `SAP fuel/procurement`.
+9. Go to Import Batches and check row counts.
+10. Go to Activity Review and filter by company, source, scope, status, or issue state.
+11. Open a row detail page.
+12. Approve one valid or suspicious row.
+13. Reject one row with a reason.
+14. Go to Audit Logs and confirm imported, approved, and rejected events are visible.
 
-```powershell
-uv run python manage.py runserver
-```
+## Upload API example
 
-Open admin:
-
-```text
-http://127.0.0.1:8000/admin/
-```
-
-Create a `Tenant` in admin before uploading files. Example:
-
-```text
-Acme Manufacturing
-```
-
-Use that tenant ID in upload requests.
-
-## Upload examples
-
-The backend expects sample data files at the repo root under `sample_data/`.
-
-From the `backend` folder, the paths look like this:
-
-```text
-../sample_data/sap_fuel_procurement_sample.csv
-../sample_data/utility_electricity_sample.csv
-../sample_data/travel_sample.csv
-```
-
-The backend ZIP I inspected does not include the `sample_data` folder, so make sure the root project has those files before demoing.
-
-## Upload utility electricity
+From the `backend` folder:
 
 ```powershell
 curl.exe -X POST http://127.0.0.1:8000/api/ingestion/upload/ `
@@ -191,134 +176,93 @@ curl.exe -X POST http://127.0.0.1:8000/api/ingestion/upload/ `
   -F "file=@../sample_data/utility_electricity_sample.csv"
 ```
 
-## Upload travel
-
-```powershell
-curl.exe -X POST http://127.0.0.1:8000/api/ingestion/upload/ `
-  -F "tenant_id=1" `
-  -F "source_type=travel" `
-  -F "file=@../sample_data/travel_sample.csv"
-```
-
-## Upload SAP
-
-```powershell
-curl.exe -X POST http://127.0.0.1:8000/api/ingestion/upload/ `
-  -F "tenant_id=1" `
-  -F "source_type=sap" `
-  -F "file=@../sample_data/sap_fuel_procurement_sample.csv"
-```
-
-## Check imported rows
-
-Open:
+`source_type` must be one of:
 
 ```text
-http://127.0.0.1:8000/api/activity-records/
+sap
+utility
+travel
 ```
 
-Or use Django shell:
+## Tests and checks
+
+Backend:
 
 ```powershell
-uv run python manage.py shell
+cd backend
+python manage.py check
+python manage.py makemigrations --check --dry-run
+python manage.py test
 ```
 
-```python
-from activities.models import ActivityRecord
-
-for r in ActivityRecord.objects.all().order_by("id"):
-    print(r.id, r.source_type, r.activity_type, r.scope, r.status, r.source_reference)
-```
-
-Expected scope behavior:
-
-```text
-SAP fuel rows        -> scope_1
-SAP procurement rows -> scope_3
-Utility electricity  -> scope_2
-Travel rows          -> scope_3
-```
-
-## Approve and reject rows
-
-Only `valid` and `suspicious` unlocked rows can be approved.
+Frontend:
 
 ```powershell
-curl.exe -X POST http://127.0.0.1:8000/api/activity-records/38/approve/
+cd frontend
+npm run build
 ```
 
-Reject a row using PowerShell:
-
-```powershell
-Invoke-RestMethod `
-  -Uri "http://127.0.0.1:8000/api/activity-records/36/reject/" `
-  -Method POST `
-  -ContentType "application/json" `
-  -Body '{"reason":"Rejected during test review"}'
-```
-
-Check audit logs:
-
-```text
-http://127.0.0.1:8000/api/audit-logs/
-```
-
-## Tests
-
-Run:
-
-```powershell
-uv run python manage.py test
-```
-
-Current tests cover:
-
-- SAP import creates raw and normalized rows
-- utility MWh converts to kWh
-- invalid utility billing period is flagged
-- missing flight distance is flagged
-- missing hotel nights is flagged
-- raw rows are preserved
-- import audit log is created
-- approval locks a row
-- locked rows cannot be edited
-- rejection creates audit log
+These are the checks I run before calling the project ready to deploy.
 
 ## Deployment notes
 
-The backend settings support deployment, but deployment still needs to be completed.
+The backend is prepared to use SQLite locally and PostgreSQL in deployment. The switch happens through `DATABASE_URL`.
 
-For Render/Railway/Fly style deployment:
-
-1. Use PostgreSQL and set `DATABASE_URL`.
-2. Set `SECRET_KEY` to a real secret.
-3. Set `DEBUG=False`.
-4. Set `ALLOWED_HOSTS` to the backend domain.
-5. Set `CORS_ALLOWED_ORIGINS` to the frontend domain when frontend is ready.
-6. Run migrations on deploy.
-7. Use Gunicorn as the start command.
-
-Example start command:
-
-```bash
-gunicorn config.wsgi:application
-```
-
-Example build/start steps depend on the provider and should be finalized during deployment.
-
-## Live URL and credentials
+If `DATABASE_URL` is not set, Django uses local SQLite:
 
 ```text
-Live backend URL: TODO after deployment
-Frontend URL: TODO after frontend deployment
-Demo credentials: TODO after auth/demo setup
+backend/db.sqlite3
 ```
 
-## Current limitations
+If `DATABASE_URL` is set, Django uses PostgreSQL through `dj-database-url` and `psycopg`.
 
-- Authentication is not production-ready. API views currently allow open access for development.
-- Tenant isolation exists in the data model, but request-level tenant permission checks still need to be added.
-- There is no real emissions calculation engine yet.
-- Importers handle a practical subset of CSV formats, not every real SAP/utility/travel variation.
-- Sample CSV files need to be kept in the root `sample_data/` folder for demo uploads.
-- Deployment has not been verified from this backend ZIP.
+Recommended deployment setup:
+
+- Backend: Render Web Service
+- Database: Render PostgreSQL
+- Frontend: Render Static Site
+
+Backend build command:
+
+```bash
+pip install -r requirements.txt && cd backend && python manage.py collectstatic --noinput && python manage.py migrate
+```
+
+Backend start command:
+
+```bash
+cd backend && gunicorn config.wsgi:application
+```
+
+Frontend build command:
+
+```bash
+npm install && npm run build
+```
+
+Frontend publish directory:
+
+```text
+build
+```
+
+Backend environment variables for deployment:
+
+```env
+SECRET_KEY=replace-with-real-secret
+DEBUG=False
+ALLOWED_HOSTS=your-backend-domain.onrender.com
+DATABASE_URL=postgresql://...
+CORS_ALLOWED_ORIGINS=https://your-frontend-domain.onrender.com
+CORS_ALLOW_ALL_ORIGINS=False
+```
+
+Frontend environment variable for deployment:
+
+```env
+REACT_APP_API_BASE_URL=https://your-backend-domain.onrender.com/api
+```
+
+## Known limitations
+
+This is still a prototype. It does not include real authentication, role-based permissions, live SAP/Concur/utility API integrations, PDF bill OCR, emissions factor calculations, or background jobs for large files. Those are explained more in `TRADEOFFS.md`.

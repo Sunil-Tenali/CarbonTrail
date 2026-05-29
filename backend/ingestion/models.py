@@ -103,11 +103,11 @@ class ImportBatch(models.Model):
     )
 
     # Validation statistics (updated during processing)
-    total_rows = models.PositiveIntegerField(default=0)  # Total rows in file
-    valid_rows = models.PositiveIntegerField(default=0)  # Passed all checks
-    invalid_rows = models.PositiveIntegerField(default=0)  # Has validation errors
-    suspicious_rows = models.PositiveIntegerField(default=0)  # Warnings, needs review
-    approved_rows = models.PositiveIntegerField(default=0)  # User approved
+    total_rows = models.PositiveIntegerField(default=0)
+    valid_rows = models.PositiveIntegerField(default=0)
+    invalid_rows = models.PositiveIntegerField(default=0)
+    suspicious_rows = models.PositiveIntegerField(default=0)
+    approved_rows = models.PositiveIntegerField(default=0)
 
     def __str__(self):
         return f"{self.original_filename} - {self.status}"
@@ -115,38 +115,23 @@ class ImportBatch(models.Model):
 
 class RawActivityRow(models.Model):
     """
-    A single row of data exactly as received from external system.
+    Raw CSV row exactly as received from external system.
 
-    IMMUTABILITY PRINCIPLE: Never modify raw_payload or raw_hash.
-    This row represents the ground truth of what was sent to us.
+    IMMUTABILITY: raw_payload is the ground truth. Never modify it after creation.
+    This enables debugging, compliance audits, and deduplication.
 
-    Benefits:
-    - Debugging: "What did the source system actually send?"
-    - Compliance: Proof data wasn't tampered with
-    - Deduplication: raw_hash enables detecting duplicate uploads
-
-    Relationships:
-    - One RawActivityRow → One ActivityRecord (via OneToOneField)
-    - The hash enables quick lookup for de-duplication
-
-    Design: Use JSONField for raw_payload to support different
-    source schemas (SAP columns differ from utility company columns).
+    The raw_hash field enables fast duplicate detection across imports.
     """
 
-    # Which organization owns this data
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE)
-    # Which import batch this row came from
     import_batch = models.ForeignKey(
         ImportBatch,
         on_delete=models.CASCADE,
         related_name="raw_rows",
     )
 
-    # Position in original file (for user debugging)
     row_number = models.PositiveIntegerField()
-    # Complete data as received from source
     raw_payload = models.JSONField()
-    # SHA256 hash of payload for deduplication
     raw_hash = models.CharField(max_length=64, blank=True)
 
     # When imported
@@ -157,8 +142,7 @@ class RawActivityRow(models.Model):
         unique_together = ("import_batch", "row_number")
 
     def save(self, *args, **kwargs):
-        # Automatically compute hash if not already set
-        # Hash enables fast duplicate detection across imports
+        # Compute hash if not set, for duplicate detection
         if not self.raw_hash:
             raw_text = str(sorted(self.raw_payload.items()))
             self.raw_hash = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()

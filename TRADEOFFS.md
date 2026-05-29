@@ -1,59 +1,64 @@
 # TRADEOFFS.md
 
-This file lists the main things I deliberately did not build. I tried to keep the backend realistic for a short prototype instead of building a wide but shallow app.
+This file lists the main things I deliberately did not build. I am including more than three because a few of these were conscious cuts while keeping the prototype focused.
 
-## 1. No PDF utility bill OCR
+## 1. I did not build PDF utility bill OCR
 
-The assignment mentions utility bills as PDFs or portal exports. I chose portal-style CSV upload.
+I chose utility CSV upload instead of PDF bill extraction.
 
-PDF bill OCR is a whole separate problem:
+PDF bills are realistic, but they are a separate problem. Every utility formats bills differently, and OCR can easily misread meter numbers, dates, or usage values. Building this well would need visual review, parsing rules, and a way to store the original PDF evidence.
 
-- every utility formats bills differently
-- tables can be split across pages
-- OCR can misread numbers
-- charges and usage are often mixed together
-- validation would need visual evidence from the bill
+For this prototype, I wanted to handle the core electricity data shape first:
 
-For this prototype, CSV still lets me handle the important utility data problems: meters, billing periods, kWh/MWh, demand, tariffs, invalid dates, and missing meter IDs.
+- meter ID
+- usage quantity
+- units
+- billing period
+- tariff name
+- amount
 
-If I had more time, I would add PDF upload as a separate ingestion path and keep the current CSV importer as the cleaner fallback.
+A later version could add PDF bill upload as a separate importer while keeping the CSV path as the cleaner fallback.
 
-## 2. No real SAP, Concur, Navan, or utility API integrations
+## 2. I did not connect to real SAP, utility, Concur, or Navan APIs
 
-I used CSV upload instead of live API integrations.
+The app uses file upload instead of live integrations.
 
-This is a tradeoff because real enterprise onboarding often needs APIs, SFTP, or middleware. But connecting to real systems requires credentials, customer-specific setup, and provider-specific configuration.
+This is a tradeoff. Real enterprise onboarding often needs APIs, SFTP drops, or middleware. But real integrations would need credentials, sandbox access, custom field mappings, and sometimes customer-specific configuration.
 
-For a 4-day prototype, CSV upload is easier to run and review. It still shows the important backend logic:
+CSV upload keeps the demo runnable and still shows the important logic:
 
-- source type routing
+- source routing
 - raw row preservation
 - normalization
-- validation issues
-- approval workflow
-- audit logging
+- validation
+- review workflow
+- audit logs
 
-In production, I would probably keep the importer classes but add separate ingestion adapters for SAP OData/BAPI, utility APIs, and Concur/Navan APIs.
+In production, I would keep the importer classes but add API adapters around them.
 
-## 3. No full CO2e emissions calculation engine
+## 3. I did not calculate final CO2e emissions
 
-The backend does not calculate final emissions in CO2e.
+The app stops at normalized activity data.
 
-It stops at normalized activity data:
+It does not apply emissions factors or calculate final tonnes of CO2e. I made this choice because the assignment emphasized ingestion and normalization. Emissions calculation is important, but it brings another set of models and rules:
 
-- liters or kg for SAP fuel/procurement
-- kWh for electricity
-- km or nights for travel
+- factor source
+- factor version
+- region
+- activity date validity
+- unit compatibility
+- market-based vs location-based electricity
+- audit trail for factor changes
 
-I made this choice because the assignment says the hard part is data ingestion and normalization, not just carbon calculation. Emissions factors would need their own model, versioning, region support, date validity, unit compatibility, and audit trail.
+I would add emissions calculation after the activity rows are approved.
 
-For production, I would add an emissions factor layer after activity records are approved.
-
-## 4. Simple SAP classification
+## 4. SAP classification is simple
 
 SAP fuel vs procurement classification is currently based on keywords in the material description.
 
-This is not enough for a real customer. Real classification should use:
+That is enough for clear demo rows like diesel or LPG, but it is not enough for a real SAP customer.
+
+A better production version would use:
 
 - material groups
 - GL accounts
@@ -62,50 +67,62 @@ This is not enough for a real customer. Real classification should use:
 - plant/facility mappings
 - customer-specific rules
 
-I kept keyword classification because it is easy to understand in a demo and works for clear sample rows like diesel or LPG. I documented this because I would not want to pretend it is production-grade.
+I kept the current approach because it is easy to explain and enough to show the workflow.
 
-## 5. No real authentication or role-based permissions yet
+## 5. I did not build full authentication and role permissions
 
-The API currently uses permissive access for development.
+The prototype endpoints are open so the app is easy to run and test.
 
-That made it faster to test uploads, approval, rejection, and audit logs. But it is not safe for production.
+That is not safe for real customer data. Before production, I would add:
 
-Before using this with real company data, I would add:
-
-- login
+- user login
 - tenant membership
 - analyst/admin roles
 - per-tenant query restrictions
-- proper API permissions
+- permissions around approve/reject actions
 
-The data model already has tenant foreign keys, but request-level access control still needs to be added.
+The data model already supports tenant ownership, but access control needs to be added at the API layer.
 
-## 6. No background processing for large files
+## 6. I did not add background jobs for large imports
 
-Imports currently run during the HTTP request.
+Imports currently run inside the HTTP request.
 
-That is fine for small demo CSVs, but not for large enterprise files. A production version should use a background job system like Celery/RQ and show processing progress in the UI.
+That is okay for small sample CSVs, but a real enterprise file could have thousands or millions of rows. In that case, the app should use Celery, RQ, or another job queue.
 
-I kept synchronous import because it is easier to debug and enough for the assignment prototype.
+A better production flow would be:
 
-## 7. No original file storage
+1. Upload file.
+2. Create batch with `processing` status.
+3. Process rows in a background job.
+4. Show progress and errors in the UI.
 
-The backend stores every row as JSON, but it does not store the uploaded CSV file itself in object storage.
+I kept synchronous imports because they are easier to debug and enough for a prototype.
 
-For audit, row-level raw payloads are useful. But in production, I would also store the exact original file in S3 or another storage system so auditors can download the original evidence.
+## 7. I did not store the original uploaded CSV file
 
-## 8. No frontend yet in this backend pass
+The app stores every raw row as JSON, but it does not store the original uploaded file in object storage.
 
-The assignment requires a React review dashboard, but this current pass is backend-only.
+For audit, row-level raw payloads are helpful. But a real system should also store the exact original file in S3 or similar storage so the auditor can download it later.
 
-The backend APIs are shaped so the frontend can later show:
+## 8. I did not build manual row editing
 
-- upload summary
+Analysts can approve or reject rows, but they cannot edit normalized values in the frontend.
+
+This was intentional. Editing emissions activity data needs a stronger audit trail. If analysts can change values, the app should store before/after diffs, editor identity, reason codes, and maybe require re-approval.
+
+For this prototype, reject-and-resubmit is safer than silent editing.
+
+## 9. I kept the UI simple
+
+The React frontend is intentionally plain. It focuses on the review workflow instead of polished design.
+
+The important screens are there:
+
+- dashboard
+- upload page
 - import batches
 - activity review table
-- validation issues
-- raw payload
-- audit history
-- approve/reject actions
+- row detail
+- audit logs
 
-I am not claiming the frontend is done in these docs.
+If I had more time, I would improve table pagination, search, sorting, loading states, and empty-state design.

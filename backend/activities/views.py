@@ -13,15 +13,7 @@ from .serializers import ActivityRecordSerializer
 
 
 def build_activity_snapshot(record):
-    """
-    Create a point-in-time snapshot of record state for audit logging.
-
-    Snapshots capture the complete state before and after changes,
-    enabling compliance audits to prove data integrity.
-
-    This snapshot is stored in AuditLog.before and AuditLog.after fields
-    as JSON for comparison and debugging.
-    """
+    """Create point-in-time snapshot for audit logging before/after changes."""
     return {
         "id": record.id,
         "status": record.status,
@@ -43,27 +35,10 @@ class ActivityRecordViewSet(
     viewsets.GenericViewSet,
 ):
     """
-    REST API viewset for emissions activity records.
+    REST API for emissions activity records.
 
-    Provides endpoints for:
-    - Listing: Filter by tenant, status, source_type
-    - Retrieving: Get single record with validation issues
-    - Updating: Edit unlocked records (quantity, dates, classifications)
-    - Approving: Mark valid/suspicious records as approved and lock
-    - Rejecting: Mark records as rejected
-    - Summarizing: Get approval statistics
-
-    WORKFLOW:
-    1. Import creates ActivityRecord + ValidationIssue(s)
-    2. Record status = "valid" or "suspicious" or "invalid"
-    3. If locked, prevent further edits (compliance)
-    4. Analyst reviews and calls approve() or reject()
-    5. Approval creates AuditLog entry
-    6. Record locked to prevent modification
-
-    PERMISSIONS:
-    Currently AllowAny for development. In production, add authentication
-    and restrict to organization members only.
+    Endpoints: list, retrieve, update, approve, reject, summary.
+    Locked records prevent further edits to enforce compliance immutability.
     """
 
     serializer_class = ActivityRecordSerializer
@@ -71,11 +46,7 @@ class ActivityRecordViewSet(
 
     def get_queryset(self):
         """
-        Get filtered list of activity records with optional filters.
-
-        Filters: tenant_id, status, source_type, scope, activity_type,
-        batch_id, and validation_state (has_issues, no_issues, errors, warnings).
-
+        List activity records with optional filters.
         Uses select_related and prefetch_related for query efficiency.
         """
         queryset = (
@@ -128,11 +99,8 @@ class ActivityRecordViewSet(
 
     def update(self, request, *args, **kwargs):
         """
-        Update an entire activity record (PUT).
-
-        Locked records prevent modification to enforce compliance and audit
-        immutability. Once an analyst approves a record, it becomes locked
-        and cannot be edited, ensuring audit trail integrity.
+        Update an activity record (PUT).
+        Locked records cannot be edited to enforce compliance immutability.
         """
         record = self.get_object()
 
@@ -147,14 +115,7 @@ class ActivityRecordViewSet(
     def partial_update(self, request, *args, **kwargs):
         """
         Update specific fields of an activity record (PATCH).
-
         Same locking checks as update() but allows partial changes.
-
-        EXAMPLE:
-        PATCH /api/activity-records/123/
-        {"facility_code": "WAREHOUSE_A", "cost_center": "CC_2024"}
-
-        Updates only these fields, leaves others unchanged.
         """
         record = self.get_object()
 
@@ -189,17 +150,7 @@ class ActivityRecordViewSet(
     def approve(self, request, pk=None):
         """
         Approve a record for use in reports and lock it for audit immutability.
-
-        Preconditions: Record must be "valid" or "suspicious" (not "invalid")
-        and must not already be locked.
-
-        Actions:
-        1. Set status to "approved"
-        2. Set is_locked=True to prevent further edits
-        3. Record approved_by (current user) and approved_at (timestamp)
-        4. Create AuditLog entry with before/after snapshots
-
-        Returns updated record serialization.
+        Only valid/suspicious unlocked records can be approved.
         """
         record = self.get_object()
 
